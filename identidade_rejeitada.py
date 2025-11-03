@@ -122,8 +122,6 @@ class IdentityRejectionSystem:
                 "Eu não quero ser respeitado", "Eu não quero ter controle da minha vida"
             ],
             'tasks': {},
-            'min_interval': 30,
-            'max_interval': 180,
             'active_hours': [8, 22],
             'tts_speed': 2,
             'consecutive_completion_days': 0,
@@ -249,11 +247,21 @@ class IdentityRejectionSystem:
     def get_next_interval(self):
         consecutive_days = self.config.get('consecutive_completion_days', 0)
         
-        bonus_min = consecutive_days * 5 
+        # Bônus de adaptação: a cada dia consecutivo, o intervalo aumenta
+        # Aumenta 5 min no mínimo e 10 min no máximo por dia
+        bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
         
-        min_int = self.config['min_interval'] + bonus_min
-        max_int = self.config['max_interval'] + bonus_max
+        # Nova base de intervalo: 20 a 90 minutos
+        base_min_int = 20
+        base_max_int = 90
+        
+        min_int = base_min_int + bonus_min
+        max_int = base_max_int + bonus_max
+        
+        # Garante que o mínimo nunca ultrapasse o máximo
+        if min_int > max_int:
+            min_int = max_int - 10 
         
         return random.randint(min_int, max_int)
 
@@ -661,8 +669,6 @@ class App:
             spin.pack(side=tk.RIGHT, padx=5)
             return var
 
-        min_var = add_spinbox("Intervalo Mín. (min):", "min_interval", 1, 120)
-        max_var = add_spinbox("Intervalo Máx. (min):", "max_interval", 30, 720)
         start_h_var = add_spinbox("Hora Início:", "active_hours_start", 0, 23)
         end_h_var = add_spinbox("Hora Fim:", "active_hours_end", 1, 24)
         tts_var = add_spinbox("Velocidade Fala (TTS):", "tts_speed", -5, 10)
@@ -671,8 +677,6 @@ class App:
         end_h_var.set(self.system.config['active_hours'][1])
 
         def save_settings():
-            self.system.config['min_interval'] = min_var.get()
-            self.system.config['max_interval'] = max_var.get()
             self.system.config['active_hours'] = [start_h_var.get(), end_h_var.get()]
             self.system.config['tts_speed'] = tts_var.get()
             self.system.save_config()
