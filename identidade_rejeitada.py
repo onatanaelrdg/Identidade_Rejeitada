@@ -535,7 +535,7 @@ class App:
         
         ttk.Button(frame, text="Gerenciar Atividades", command=self.open_task_manager).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Gerenciar Rejeições", command=self.open_rejection_manager).pack(fill=tk.X, pady=5)
-        ttk.Button(frame, text="Configurações", command=self.open_settings).pack(fill=tk.X, pady=5)
+        #ttk.Button(frame, text="Configurações", command=self.open_settings).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Testar Áudio", command=self.system.play_rejection).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Sair do App", command=self.quit_app).pack(fill=tk.X, pady=(15, 5))
 
@@ -753,35 +753,43 @@ class App:
 
 def setup_persistence():
     if not IS_WINDOWS:
-        return True 
-
-    if getattr(sys, 'frozen', False):
-        executable_path = sys.executable
-        appdata_executable_path = os.path.join(APP_DATA_DIR, os.path.basename(executable_path))
-        
-        if os.path.normpath(executable_path) == os.path.normpath(appdata_executable_path):
-            return True 
-    else:
-        executable_path = os.path.abspath(__file__)
-        appdata_executable_path = os.path.join(APP_DATA_DIR, os.path.basename(executable_path))
-        
-        if os.path.normpath(executable_path) == os.path.normpath(appdata_executable_path):
-            return True
+        return True # Não é Windows, apenas continue
 
     try:
-        shutil.copy(executable_path, appdata_executable_path)
+        # 1. Encontrar o caminho absoluto do script .py
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         
+        # 2. Montar o caminho para o IRS.bat
+        bat_path = os.path.join(script_dir, "IRS.bat")
+        
+        if not os.path.exists(bat_path):
+            print("Aviso: IRS.bat não encontrado. A inicialização automática não será configurada.")
+            return True # .bat não existe, apenas rode o app
+
+        # 3. Definir o caminho e nome da chave no registro
         key = winreg.HKEY_CURRENT_USER
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        
+        value_name = APP_NAME
+
+        # 4. Verificar se a chave já está correta
+        try:
+            with winreg.OpenKey(key, key_path, 0, winreg.KEY_READ) as reg_key:
+                current_value, _ = winreg.QueryValueEx(reg_key, value_name)
+                if current_value == bat_path:
+                    return True # Já está configurado, apenas rode
+        except FileNotFoundError:
+            pass # Chave não existe, vamos criar
+
+        # 5. Se não estiver correta ou não existir, escreve a chave
         with winreg.OpenKey(key, key_path, 0, winreg.KEY_SET_VALUE) as reg_key:
-            winreg.SetValueEx(reg_key, APP_NAME, 0, winreg.REG_SZ, f'"{appdata_executable_path}"')
-            
-        subprocess.Popen([appdata_executable_path])
-        return False 
+            winreg.SetValueEx(reg_key, value_name, 0, winreg.REG_SZ, bat_path)
+            print(f"Sucesso: {bat_path} registrado para iniciar com o Windows.")
+    
     except Exception as e:
-        print(f"Erro ao configurar persistência: {e}")
-        return True 
+        print(f"Erro ao configurar persistência com .bat: {e}")
+        # Se falhar, apenas rode o app
+    
+    return True
 
 def main():
     if setup_persistence():
