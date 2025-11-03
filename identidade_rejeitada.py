@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-GERENCIADOR DE IDENTIDADE REJEITADA v2.0
+GERENCIADOR DE IDENTIDADE REJEITADA v2.1
+- Mecânica dividida em Daemon (serviço) e Manager (GUI)
 """
 
 import os
@@ -60,6 +61,9 @@ else:
 APP_NAME = "IdentidadeRejeitada"
 APP_DIR_NAME = "IdentidadeRejeitadaApp"
 
+# --- Funções de Diretório e Config (Globais) ---
+# Movidas para o escopo global para que tanto o Daemon quanto a GUI possam usá-las
+
 def get_app_data_dir():
     if IS_WINDOWS:
         app_data_path = os.path.join(os.getenv('APPDATA'), APP_DIR_NAME)
@@ -78,79 +82,96 @@ PROOFS_DIR = os.path.join(APP_DATA_DIR, "provas")
 Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
 
 
+def load_config_data():
+    """Carrega os dados de configuração do JSON."""
+    default_config = {
+        'rejections': [
+            "Eu não quero emagrecer", "Eu não quero falar inglês fluentemente",
+            "Eu não quero ser rico", "Eu não quero poder ajudar minha mãe",
+            "Eu quero continuar sozinho pro resto da minha vida",
+            "Eu não quero realizar meus sonhos", "Eu não quero ter disciplina",
+            "Eu não quero ser respeitado", "Eu não quero ter controle da minha vida"
+        ],
+        'tasks': {},
+        'tts_speed': 3,
+        'consecutive_completion_days': 0,
+        'last_completion_date': None,
+        'study_mode': False # Chave de comunicação
+    }
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            for key, value in default_config.items():
+                if key not in config:
+                    config[key] = value
+            return config
+            
+        except json.JSONDecodeError:
+            return default_config
+    else:
+        save_config_data(default_config)
+        return default_config
+
+def save_config_data(data):
+    """Salva os dados de configuração no JSON."""
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Erro ao salvar config: {e}")
+
+def log_event(event_type, details):
+    """Salva um evento no log JSON."""
+    try:
+        logs = []
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                try:
+                    logs = json.load(f)
+                except json.JSONDecodeError:
+                    logs = []
+        
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "date": date.today().isoformat(),
+            "type": event_type,
+            "details": details
+        }
+        logs.append(log_entry)
+        
+        with open(LOG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(logs, f, ensure_ascii=False, indent=2)
+            
+    except Exception as e:
+        print(f"Erro ao logar evento: {e}")
+
+# ---
+# MECÂNICA 1: O REPRODUTOR (DAEMON)
+# ---
+
 class IdentityRejectionSystem:
-    def __init__(self, app_instance):
-        self.app = app_instance 
-        self.config = {}
-        self.tasks = {}
-        self.load_config()
+    """Classe de lógica pura (Daemon). Não tem GUI, apenas áudio e popups."""
+    def __init__(self, popup_callback_func):
+        self.popup_callback = popup_callback_func
+        self.config = load_config_data()
+        self.tasks = self.config.get('tasks', {})
         self.running = False
-        self.study_mode = False
         self.rejection_thread = None
-        self.accountability_thread = None
-        self.last_played = None
         self.reset_tasks_if_new_day()
 
-    def log_event(self, event_type, details):
-        try:
-            logs = []
-            if os.path.exists(LOG_FILE):
-                with open(LOG_FILE, 'r', encoding='utf-8') as f:
-                    logs = json.load(f)
-            
-            log_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "date": date.today().isoformat(),
-                "type": event_type,
-                "details": details
-            }
-            logs.append(log_entry)
-            
-            with open(LOG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(logs, f, ensure_ascii=False, indent=2)
-                
-        except Exception as e:
-            print(f"Erro ao logar evento: {e}")
-
-    def load_config(self):
-        default_config = {
-            'rejections': [
-                "Eu não quero emagrecer", "Eu não quero falar inglês fluentemente",
-                "Eu não quero ser rico", "Eu não quero poder ajudar minha mãe",
-                "Eu não quero liderar minha família", "Eu quero continuar sozinho pro resto da minha vida",
-                "Eu não quero realizar meus sonhos", "Eu não quero ter disciplina",
-                "Eu não quero ser respeitado", "Eu não quero ter controle da minha vida"
-            ],
-            'tasks': {},
-            'tts_speed': 2,
-            'consecutive_completion_days': 0,
-            'last_completion_date': None
-        }
-        
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
-                
-                for key, value in default_config.items():
-                    if key not in self.config:
-                        self.config[key] = value
-                        
-            except json.JSONDecodeError:
-                self.config = default_config
-        else:
-            self.config = default_config
-            
+    def reload_config(self):
+        """Recarrega a configuração para verificar status (study_mode, tasks)."""
+        self.config = load_config_data()
         self.tasks = self.config.get('tasks', {})
-        self.save_config()
+        self.reset_tasks_if_new_day()
 
     def save_config(self):
+        """Salva o estado atual (usado para dias consecutivos, etc.)."""
         self.config['tasks'] = self.tasks
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"Erro ao salvar config: {e}")
+        save_config_data(self.config)
             
     def reset_tasks_if_new_day(self):
         today_str = date.today().isoformat()
@@ -162,9 +183,6 @@ class IdentityRejectionSystem:
                 all_tasks_completed_yesterday = False
                 
             for task_id, task in self.tasks.items():
-                if not task.get('completed_on'):
-                    all_tasks_completed_yesterday = False
-                    break
                 if task.get('completed_on') != last_completion:
                     all_tasks_completed_yesterday = False
                     break
@@ -175,11 +193,16 @@ class IdentityRejectionSystem:
                     self.config['consecutive_completion_days'] += 1
                 elif not all_tasks_completed_yesterday and last_completion:
                     self.config['consecutive_completion_days'] = 0
-                    self.log_event("reset_frequencia", "Atividades não concluídas no dia anterior.")
+                    log_event("reset_frequencia", "Atividades não concluídas no dia anterior.")
 
+            # Reseta tarefas para o novo dia
             for task_id, task in self.tasks.items():
                 task['completed_on'] = None
                 task['proof'] = None
+            
+            # Garante que o modo estudo não fique "preso" se o PC for reiniciado
+            self.config['study_mode'] = False
+            self.config['last_completion_date'] = None # Permite que all_tasks_completed verifique hoje
             
             self.save_config()
 
@@ -188,40 +211,38 @@ class IdentityRejectionSystem:
             try:
                 scalar_level = level_percent / 100.0
                 VOLUME_CONTROL.SetMasterVolumeLevelScalar(scalar_level, None)
-                self.log_event("volume_set", f"{level_percent}%")
+                log_event("volume_set", f"{level_percent}%")
             except Exception as e:
                 print(f"Erro ao setar volume: {e}")
         else:
             print("Controle de volume não disponível neste SO.")
 
-    def speak_text(self, text):
-        speed = self.config.get('tts_speed', 2)
+    def speak_text(self, text, tts_speed):
         try:
             if IS_WINDOWS:
                 subprocess.run([
                     'powershell', '-Command',
                     f'Add-Type -AssemblyName System.Speech; '
                     f'$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-                    f'$speak.Rate = {speed}; '
+                    f'$speak.Rate = {tts_speed}; '
                     f'$speak.Volume = 100; '
                     f'$speak.Speak("{text}")'
                 ], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
             
             elif IS_MACOS:
-                rate = int(120 + (speed * 15)) 
+                rate = int(120 + (tts_speed * 15)) 
                 subprocess.run(['say', '-r', str(rate), text], check=True)
             
             elif IS_LINUX:
-                rate = int(140 + (speed * 10))
+                rate = int(140 + (tts_speed * 10))
                 try:
                     subprocess.run(['espeak', '-s', str(rate), text], check=True)
                 except FileNotFoundError:
                     print("Instale 'espeak' para TTS no Linux")
-                    self.app.show_popup_message("TTS Error", "Instale 'espeak' para TTS no Linux.")
 
         except Exception as e:
             print(f"Erro ao reproduzir áudio: {e}")
-            self.log_event("error_tts", str(e))
+            log_event("error_tts", str(e))
 
     def all_tasks_completed(self):
         if not self.tasks:
@@ -233,30 +254,21 @@ class IdentityRejectionSystem:
         today_str = date.today().isoformat()
         if self.config.get('last_completion_date') != today_str:
             self.config['last_completion_date'] = today_str
-            self.log_event("all_tasks_completed", "Todas as atividades do dia foram concluídas.")
+            log_event("all_tasks_completed", "Todas as atividades do dia foram concluídas.")
             self.save_config()
             
         return True
 
     def get_next_interval(self):
         consecutive_days = self.config.get('consecutive_completion_days', 0)
-        
-        # Bônus de adaptação: a cada dia consecutivo, o intervalo aumenta
-        # Aumenta 5 min no mínimo e 10 min no máximo por dia
         bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
-        
-        # Nova base de intervalo: 20 a 90 minutos
         base_min_int = 20
         base_max_int = 90
-        
         min_int = base_min_int + bonus_min
         max_int = base_max_int + bonus_max
-        
-        # Garante que o mínimo nunca ultrapasse o máximo
         if min_int > max_int:
             min_int = max_int - 10 
-        
         return random.randint(min_int, max_int)
 
     def play_rejection(self):
@@ -265,23 +277,28 @@ class IdentityRejectionSystem:
             return
 
         rejection = random.choice(self.config['rejections'])
+        tts_speed = self.config.get('tts_speed', 2)
         
-        self.log_event("rejection_played", rejection)
+        log_event("rejection_played", rejection)
         
-        self.app.root.after(0, self.app.show_rejection_popup, rejection)
+        # Chama a função de popup (que usa o root do daemon)
+        self.popup_callback(rejection)
         
         self.set_volume(80)
         
         for _ in range(3):
             if not self.running: break
-            self.speak_text(rejection)
+            self.speak_text(rejection, tts_speed)
             time.sleep(0.5) 
             
     def run_rejection_loop(self):
         while self.running:
             try:
-                if self.study_mode or self.all_tasks_completed():
-                    time.sleep(60) 
+                # Recarrega o config a cada ciclo para pegar comandos da GUI
+                self.reload_config()
+                
+                if self.config.get('study_mode', False) or self.all_tasks_completed():
+                    time.sleep(30) # Checa a cada 30s se o status mudou
                     continue
 
                 interval_minutes = self.get_next_interval()
@@ -289,72 +306,103 @@ class IdentityRejectionSystem:
                 
                 print(f"Próxima rejeição em {interval_minutes} minutos.")
                 
-                for _ in range(interval_seconds):
-                    if not self.running or self.study_mode or self.all_tasks_completed():
-                        break 
+                for i in range(interval_seconds):
+                    if not self.running:
+                        break
+                    
+                    # Checa o status a cada 10 segundos
+                    if i % 10 == 0:
+                        self.reload_config()
+                        if self.config.get('study_mode', False) or self.all_tasks_completed():
+                            break # Interrompe a contagem se o modo estudo for ativado
+                    
                     time.sleep(1)
                 
-                if self.running and not self.study_mode and not self.all_tasks_completed():
+                # Se a contagem terminou (e não foi interrompida)
+                if self.running and not self.config.get('study_mode', False) and not self.all_tasks_completed():
                     self.play_rejection()
             
             except Exception as e:
                 print(f"Erro no loop de rejeição: {e}")
-                self.log_event("error_loop", str(e))
+                log_event("error_loop", str(e))
                 time.sleep(60)
-            
-            except Exception as e:
-                print(f"Erro no loop de rejeição: {e}")
-                self.log_event("error_loop", str(e))
-                time.sleep(60)
-
-    def run_accountability_check(self):
-        while self.running and self.study_mode:
-            interval = random.randint(15 * 60, 45 * 60)
-            time.sleep(interval)
-            
-            if self.running and self.study_mode:
-                self.app.root.after(0, self.app.ask_accountability)
 
     def start(self):
         self.running = True
         self.rejection_thread = threading.Thread(target=self.run_rejection_loop, daemon=True)
         self.rejection_thread.start()
-        self.log_event("system_start", "Sistema iniciado.")
-        
+        log_event("system_start", "Daemon (Reprodutor) iniciado.")
+            
     def stop(self):
         self.running = False
-        self.study_mode = False
-        self.log_event("system_stop", "Sistema parado.")
+        log_event("system_stop", "Daemon (Reprodutor) parado.")
         if self.rejection_thread:
             self.rejection_thread.join(timeout=2)
-        if self.accountability_thread:
-            self.accountability_thread.join(timeout=2)
 
-    def toggle_study_mode(self, state):
-        self.study_mode = state
-        if state:
-            self.log_event("study_mode_on", "Modo Estudo/Trabalho ativado.")
-            self.accountability_thread = threading.Thread(target=self.run_accountability_check, daemon=True)
-            self.accountability_thread.start()
-        else:
-            self.log_event("study_mode_off", "Modo Estudo/Trabalho desativado.")
 
+def show_standalone_popup(root, text):
+    """Função de popup que roda em qualquer root de tkinter."""
+    try:
+        popup = tk.Toplevel(root)
+        popup.title("IDENTIDADE REJEITADA")
+        popup.geometry("500x200")
+        popup.attributes("-topmost", True)
+        popup.configure(bg="#1A0000")
+        
+        label = tk.Label(popup, text=text, font=("Impact", 20),
+                         fg="#FF0000", bg="#1A0000",
+                         wraplength=480, justify=tk.CENTER)
+        label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        popup.after(8000, popup.destroy)
+    except Exception as e:
+        print(f"Erro ao mostrar popup: {e}")
+
+def run_daemon():
+    """Função principal do DAEMON. Roda em background."""
+    # Cria uma janela root invisível, apenas para hospedar os popups
+    daemon_root = tk.Tk()
+    daemon_root.withdraw()
+    
+    # Passa a função de popup para o sistema
+    system = IdentityRejectionSystem(
+        popup_callback_func=lambda text: show_standalone_popup(daemon_root, text)
+    )
+    system.start()
+    
+    # Mantém o processo vivo (e capaz de mostrar popups)
+    try:
+        daemon_root.mainloop()
+    except KeyboardInterrupt:
+        system.stop()
+
+# ---
+# MECÂNICA 2: O GERENCIADOR (GUI)
+# ---
 
 class App:
+    """Classe da Interface Gráfica (Gerenciador). Apenas edita o config.json."""
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
         self.root.geometry("600x500")
         
-        self.system = IdentityRejectionSystem(self)
+        # Carrega os dados de config
+        self.config_data = load_config_data()
+        self.tasks = self.config_data.get('tasks', {})
+        self.accountability_thread = None
+        self.accountability_running = False
         
         self.setup_style()
         self.create_main_widgets()
         self.setup_tray_icon()
         
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
-        self.system.start()
         self.update_task_list()
+        
+        # Sincroniza o checkbox com o status do config
+        self.study_mode_var.set(self.config_data.get('study_mode', False))
+        self.toggle_study_mode_overlay(self.study_mode_var.get())
 
     def setup_style(self):
         self.style = ttk.Style()
@@ -427,12 +475,16 @@ class App:
         self.task_widgets = {}
         today_str = date.today().isoformat()
         
-        if not self.system.tasks:
+        # Recarrega tasks do config
+        self.config_data = load_config_data()
+        self.tasks = self.config_data.get('tasks', {})
+        
+        if not self.tasks:
             ttk.Label(self.scrollable_frame, text="Nenhuma atividade cadastrada.\nVá em Menu > Gerenciar Atividades.",
                       font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
             return
 
-        for task_id, task in self.system.tasks.items():
+        for task_id, task in self.tasks.items():
             task_frame = ttk.Frame(self.scrollable_frame, padding=5)
             task_frame.pack(fill=tk.X, pady=2)
             
@@ -457,23 +509,35 @@ class App:
 
     def on_task_check(self, var, task_id):
         if var.get(): 
-            task = self.system.tasks[task_id]
+            task = self.tasks[task_id]
             proof_type, proof_data = self.get_proof(task['name'])
             
             if proof_data:
                 task['completed_on'] = date.today().isoformat()
                 task['proof'] = proof_data
                 task['proof_type'] = proof_type
-                self.system.save_config()
-                self.system.log_event("task_completed", f"{task_id}: {task['name']}")
+                
+                self.config_data['tasks'] = self.tasks
+                save_config_data(self.config_data)
+                
+                log_event("task_completed", f"{task_id}: {task['name']}")
                 self.update_task_list()
                 
-                if self.system.all_tasks_completed():
+                # Verifica se todas foram completas
+                all_done = True
+                for t in self.tasks.values():
+                    if not t.get('completed_on') == date.today().isoformat():
+                        all_done = False
+                        break
+                
+                if all_done:
                     messagebox.showinfo("Parabéns!", "Todas as atividades de hoje foram concluídas! Os áudios estão desativados por hoje.")
+                    # Atualiza o config para o daemon saber
+                    self.config_data['last_completion_date'] = date.today().isoformat()
+                    save_config_data(self.config_data)
+
             else:
                 var.set(False) 
-        else:
-            pass
 
     def get_proof(self, task_name):
         proof_win = tk.Toplevel(self.root)
@@ -535,9 +599,37 @@ class App:
         
         ttk.Button(frame, text="Gerenciar Atividades", command=self.open_task_manager).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Gerenciar Rejeições", command=self.open_rejection_manager).pack(fill=tk.X, pady=5)
-        #ttk.Button(frame, text="Configurações", command=self.open_settings).pack(fill=tk.X, pady=5)
-        ttk.Button(frame, text="Testar Áudio", command=self.system.play_rejection).pack(fill=tk.X, pady=5)
+        ttk.Button(frame, text="Configurações (Velocidade)", command=self.open_settings).pack(fill=tk.X, pady=5)
+        ttk.Button(frame, text="Testar Áudio", command=self.test_audio).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Sair do App", command=self.quit_app).pack(fill=tk.X, pady=(15, 5))
+
+    def test_audio(self):
+        """Cria um sistema temporário só para testar o áudio."""
+        try:
+            temp_config = load_config_data()
+            if not temp_config['rejections']:
+                messagebox.showinfo("Teste de Áudio", "Nenhuma rejeição cadastrada para testar.")
+                return
+                
+            rejection = random.choice(temp_config['rejections'])
+            tts_speed = temp_config.get('tts_speed', 2)
+            
+            # Re-usa a lógica de 'speak_text'
+            if IS_WINDOWS:
+                subprocess.run([
+                    'powershell', '-Command',
+                    f'Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+                    f'$speak.Rate = {tts_speed}; $speak.Speak("{rejection}")'
+                ], check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            elif IS_MACOS:
+                rate = int(120 + (tts_speed * 15)) 
+                subprocess.run(['say', '-r', str(rate), rejection], check=True)
+            elif IS_LINUX:
+                rate = int(140 + (tts_speed * 10))
+                subprocess.run(['espeak', '-s', str(rate), rejection], check=True)
+                
+        except Exception as e:
+            messagebox.showerror("Erro no Teste", f"Não foi possível tocar o áudio: {e}")
 
     def manage_list_items(self, title, item_list_key):
         manager_win = tk.Toplevel(self.root)
@@ -546,7 +638,9 @@ class App:
         manager_win.transient(self.root)
         manager_win.grab_set()
         
-        item_list = self.system.config.get(item_list_key, [])
+        # Carrega os dados mais recentes
+        current_config = load_config_data()
+        item_list = current_config.get(item_list_key, [])
         
         frame = ttk.Frame(manager_win, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -574,7 +668,8 @@ class App:
                 item_list.append(new_item)
                 listbox.insert(tk.END, new_item)
                 entry.delete(0, tk.END)
-                self.system.save_config()
+                current_config[item_list_key] = item_list
+                save_config_data(current_config)
 
         def remove_item():
             selected_indices = listbox.curselection()
@@ -584,7 +679,8 @@ class App:
             if selected_item in item_list:
                 item_list.remove(selected_item)
                 listbox.delete(selected_indices[0])
-                self.system.save_config()
+                current_config[item_list_key] = item_list
+                save_config_data(current_config)
 
         ttk.Button(btn_frame, text="Add", command=add_item).pack(side=tk.LEFT)
         ttk.Button(frame, text="Remover Selecionado", command=remove_item).pack(fill=tk.X, pady=5)
@@ -595,6 +691,9 @@ class App:
         manager_win.geometry("400x350")
         manager_win.transient(self.root)
         manager_win.grab_set()
+        
+        current_config = load_config_data()
+        current_tasks = current_config.get('tasks', {})
         
         frame = ttk.Frame(manager_win, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -607,7 +706,7 @@ class App:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        for task_id, task in self.system.tasks.items():
+        for task_id, task in current_tasks.items():
             listbox.insert(tk.END, f"{task['name']} (ID: {task_id})")
             
         btn_frame = ttk.Frame(frame)
@@ -620,7 +719,7 @@ class App:
             task_name = entry.get()
             if task_name:
                 task_id = str(int(time.time())) 
-                self.system.tasks[task_id] = {
+                current_tasks[task_id] = {
                     "name": task_name,
                     "created_on": date.today().isoformat(),
                     "completed_on": None,
@@ -628,7 +727,8 @@ class App:
                 }
                 listbox.insert(tk.END, f"{task_name} (ID: {task_id})")
                 entry.delete(0, tk.END)
-                self.system.save_config()
+                current_config['tasks'] = current_tasks
+                save_config_data(current_config)
                 self.update_task_list()
 
         def remove_item():
@@ -638,14 +738,17 @@ class App:
             selected_text = listbox.get(selected_indices[0])
             task_id = selected_text.split(" (ID: ")[1].replace(")", "")
             
-            if task_id in self.system.tasks:
-                del self.system.tasks[task_id]
+            if task_id in current_tasks:
+                del current_tasks[task_id]
                 listbox.delete(selected_indices[0])
-                self.system.save_config()
+                current_config['tasks'] = current_tasks
+                save_config_data(current_config)
                 self.update_task_list()
 
         ttk.Button(btn_frame, text="Add", command=add_item).pack(side=tk.LEFT)
         ttk.Button(frame, text="Remover Selecionada", command=remove_item).pack(fill=tk.X, pady=5)
+        
+        manager_win.protocol("WM_DELETE_WINDOW", self.update_task_list)
 
     def open_rejection_manager(self):
         self.manage_list_items("Gerenciar Rejeições", "rejections")
@@ -656,64 +759,83 @@ class App:
         settings_win.transient(self.root)
         settings_win.grab_set()
         
+        current_config = load_config_data()
+        
         frame = ttk.Frame(settings_win, padding="15")
         frame.pack(fill=tk.BOTH, expand=True)
         
-        def add_spinbox(label, key, from_, to):
-            row = ttk.Frame(frame)
-            row.pack(fill=tk.X, pady=3)
-            ttk.Label(row, text=label).pack(side=tk.LEFT, padx=5)
-            var = tk.IntVar(value=self.system.config[key])
-            spin = ttk.Spinbox(row, from_=from_, to=to, textvariable=var, width=5)
-            spin.pack(side=tk.RIGHT, padx=5)
-            return var
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X, pady=3)
+        ttk.Label(row, text="Velocidade Fala (TTS):").pack(side=tk.LEFT, padx=5)
+        tts_var = tk.IntVar(value=current_config.get('tts_speed', 2))
+        spin = ttk.Spinbox(row, from_=-5, to=10, textvariable=tts_var, width=5)
+        spin.pack(side=tk.RIGHT, padx=5)
 
-        tts_var = add_spinbox("Velocidade Fala (TTS):", "tts_speed", -5, 10)
-        
         def save_settings():
-            self.system.config['tts_speed'] = tts_var.get()
-            self.system.save_config()
-            self.system.log_event("settings_updated", self.system.config)
+            current_config['tts_speed'] = tts_var.get()
+            save_config_data(current_config)
+            log_event("settings_updated", f"TTS Speed: {tts_var.get()}")
             settings_win.destroy()
 
         ttk.Button(frame, text="Salvar", command=save_settings).pack(pady=15)
 
-    def toggle_study_mode(self):
-        state = self.study_mode_var.get()
-        self.system.toggle_study_mode(state)
-        
+    def toggle_study_mode_overlay(self, state):
         if state:
             self.study_mode_overlay.place(relx=0, rely=1.0, anchor='sw')
         else:
             self.study_mode_overlay.place_forget()
+
+    def toggle_study_mode(self):
+        state = self.study_mode_var.get()
+        
+        # Salva o estado no config para o daemon ler
+        self.config_data = load_config_data()
+        self.config_data['study_mode'] = state
+        save_config_data(self.config_data)
+        
+        self.toggle_study_mode_overlay(state)
+        
+        if state:
+            log_event("study_mode_on", "Modo Estudo/Trabalho ativado (via GUI).")
+            # Inicia a thread de verificação
+            self.accountability_running = True
+            self.accountability_thread = threading.Thread(target=self.run_accountability_check, daemon=True)
+            self.accountability_thread.start()
+        else:
+            log_event("study_mode_off", "Modo Estudo/Trabalho desativado (via GUI).")
+            # Para a thread de verificação
+            self.accountability_running = False
+
+    def run_accountability_check(self):
+        """Thread de verificação que roda DENTRO da GUI, quando ela está aberta."""
+        while self.accountability_running:
+            interval = random.randint(15 * 60, 45 * 60)
             
+            slept_time = 0
+            while slept_time < interval and self.accountability_running:
+                time.sleep(1)
+                slept_time += 1
+            
+            if self.accountability_running:
+                # Precisa agendar a messagebox na thread principal do tkinter
+                self.root.after(0, self.ask_accountability)
+
     def ask_accountability(self):
-        self.root.deiconify() 
+        """Mostra o popup de verificação."""
+        if not self.accountability_running:
+            return
+            
+        self.show_window() # Traz a janela para frente
         answer = messagebox.askyesno("Verificação de Foco",
                                        "Você ainda está fazendo o que disse que faria?",
                                        parent=self.root)
         if not answer:
             self.study_mode_var.set(False)
-            self.toggle_study_mode()
-            self.system.log_event("accountability_check_failed", "Usuário respondeu 'Não'.")
+            self.toggle_study_mode() # Isso vai salvar o config e parar a thread
+            log_event("accountability_check_failed", "Usuário respondeu 'Não'.")
         else:
-            self.system.log_event("accountability_check_ok", "Usuário respondeu 'Sim'.")
-
-    def show_rejection_popup(self, text):
-        popup = tk.Toplevel(self.root)
-        popup.title("IDENTIDADE REJEITADA")
-        popup.geometry("500x200")
-        popup.attributes("-topmost", True)
-        popup.configure(bg="#1A0000")
-        
-        label = tk.Label(popup, text=text, font=("Impact", 20),
-                         fg="#FF0000", bg="#1A0000",
-                         wraplength=480, justify=tk.CENTER)
-        label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        self.root.deiconify() 
-        popup.after(8000, popup.destroy) 
-        
+            log_event("accountability_check_ok", "Usuário respondeu 'Sim'.")
+            
     def show_popup_message(self, title, message):
         messagebox.showinfo(title, message)
 
@@ -722,82 +844,90 @@ class App:
             print("pystray ou Pillow não encontrados. Ícone de bandeja desativado.")
             return
 
-        image = Image.new('RGB', (64, 64), (255, 0, 0))
+        image = Image.new('RGB', (64, 64), (0, 100, 200)) # Azul para o Gerenciador
         d = ImageDraw.Draw(image)
-        d.text((10, 10), "IR", fill=(255, 255, 255))
+        d.text((10, 10), "IRS-M", fill=(255, 255, 255))
         
         menu = (
             item('Abrir Gerenciador', self.show_window, default=True),
             item('Sair', self.quit_app)
         )
-        self.tray_icon = pystray.Icon(APP_NAME, image, APP_NAME, menu)
+        self.tray_icon = pystray.Icon(APP_NAME, image, f"{APP_NAME} (Gerenciador)", menu)
         
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def hide_window(self):
         self.root.withdraw()
-        self.system.log_event("window_hide", "Janela minimizada para bandeja.")
+        log_event("window_hide", "Gerenciador minimizado para bandeja.")
 
     def show_window(self):
         self.root.deiconify()
         self.root.attributes("-topmost", True)
+        self.update_task_list() # Atualiza a lista ao mostrar
         self.root.after(100, lambda: self.root.attributes("-topmost", False))
 
     def quit_app(self):
-        self.system.log_event("app_quit", "Aplicação encerrada.")
-        self.system.stop()
+        log_event("app_quit", "Gerenciador encerrado.")
+        self.accountability_running = False # Para a thread de verificação
+        
         if hasattr(self, 'tray_icon'):
             self.tray_icon.stop()
         self.root.quit()
         sys.exit()
 
+# ---
+# INICIALIZAÇÃO E REGISTRO
+# ---
+
 def setup_persistence():
+    """Registra o DAEMON (.bat) para iniciar com o Windows."""
     if not IS_WINDOWS:
-        return True # Não é Windows, apenas continue
+        return True 
 
     try:
         # 1. Encontrar o caminho absoluto do script .py
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # 2. Montar o caminho para o IRS.bat
+        # 2. Montar o caminho para o IRS.bat (que deve rodar o --daemon)
         bat_path = os.path.join(script_dir, "IRS.bat")
         
         if not os.path.exists(bat_path):
             print("Aviso: IRS.bat não encontrado. A inicialização automática não será configurada.")
-            return True # .bat não existe, apenas rode o app
+            return True 
 
-        # 3. Definir o caminho e nome da chave no registro
         key = winreg.HKEY_CURRENT_USER
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        value_name = APP_NAME
+        value_name = f"{APP_NAME}_Daemon"
 
-        # 4. Verificar se a chave já está correta
         try:
             with winreg.OpenKey(key, key_path, 0, winreg.KEY_READ) as reg_key:
                 current_value, _ = winreg.QueryValueEx(reg_key, value_name)
                 if current_value == bat_path:
-                    return True # Já está configurado, apenas rode
+                    return True # Já está configurado
         except FileNotFoundError:
-            pass # Chave não existe, vamos criar
+            pass 
 
-        # 5. Se não estiver correta ou não existir, escreve a chave
         with winreg.OpenKey(key, key_path, 0, winreg.KEY_SET_VALUE) as reg_key:
             winreg.SetValueEx(reg_key, value_name, 0, winreg.REG_SZ, bat_path)
             print(f"Sucesso: {bat_path} registrado para iniciar com o Windows.")
     
     except Exception as e:
         print(f"Erro ao configurar persistência com .bat: {e}")
-        # Se falhar, apenas rode o app
     
     return True
 
 def main():
-    if setup_persistence():
-        root = tk.Tk()
-        app = App(root)
-        root.mainloop()
+    # Verifica se deve rodar como Daemon (background) ou GUI (gerenciador)
+    if "--daemon" in sys.argv:
+        run_daemon()
     else:
-        sys.exit()
+        # Roda como GUI
+        if setup_persistence():
+            root = tk.Tk()
+            app = App(root)
+            root.mainloop()
+        else:
+            sys.exit()
 
 if __name__ == "__main__":
     main()
