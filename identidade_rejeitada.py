@@ -148,6 +148,18 @@ def log_event(event_type, details):
     except Exception as e:
         print(f"Erro ao logar evento: {e}")
 
+def set_system_volume(level_percent):
+    """Define o volume mestre do sistema (atualmente, apenas Windows)."""
+    if IS_WINDOWS and VOLUME_CONTROL:
+        try:
+            scalar_level = level_percent / 100.0
+            VOLUME_CONTROL.SetMasterVolumeLevelScalar(scalar_level, None)
+            log_event("volume_set", f"{level_percent}%")
+        except Exception as e:
+            messagebox.showerror("Erro ao Setar Volume", f"Erro ao setar volume: {e}")
+    else:
+        messagebox.showinfo("Controle de Volume", "Controle de volume não disponível neste sistema operacional.")
+
 # ---
 # MECÂNICA 1: O REPRODUTOR (DAEMON)
 # ---
@@ -207,15 +219,7 @@ class IdentityRejectionSystem:
             self.save_config()
 
     def set_volume(self, level_percent):
-        if IS_WINDOWS and VOLUME_CONTROL:
-            try:
-                scalar_level = level_percent / 100.0
-                VOLUME_CONTROL.SetMasterVolumeLevelScalar(scalar_level, None)
-                log_event("volume_set", f"{level_percent}%")
-            except Exception as e:
-                print(f"Erro ao setar volume: {e}")
-        else:
-            print("Controle de volume não disponível neste SO.")
+        set_system_volume(level_percent)
 
     def speak_text(self, text, tts_speed):
         try:
@@ -614,6 +618,8 @@ class App:
             rejection = random.choice(temp_config['rejections'])
             tts_speed = temp_config.get('tts_speed', 2)
             
+            set_system_volume(80) # Chama a função global
+            
             # Re-usa a lógica de 'speak_text'
             if IS_WINDOWS:
                 subprocess.run([
@@ -889,10 +895,10 @@ def setup_persistence():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
         # 2. Montar o caminho para o IRS.bat (que deve rodar o --daemon)
-        bat_path = os.path.join(script_dir, "IRS.bat")
+        bat_path = os.path.join(script_dir, "IRS_background.bat")
         
         if not os.path.exists(bat_path):
-            print("Aviso: IRS.bat não encontrado. A inicialização automática não será configurada.")
+            messagebox.showwarning("Arquivo Ausente", "Aviso: IRS.bat não encontrado.\nA inicialização automática não será configurada.")
             return True 
 
         key = winreg.HKEY_CURRENT_USER
