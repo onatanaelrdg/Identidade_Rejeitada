@@ -117,12 +117,11 @@ class IdentityRejectionSystem:
             'rejections': [
                 "Eu não quero emagrecer", "Eu não quero falar inglês fluentemente",
                 "Eu não quero ser rico", "Eu não quero poder ajudar minha mãe",
-                "Eu quero continuar sozinho pro resto da minha vida",
+                "Eu não quero liderar minha família", "Eu quero continuar sozinho pro resto da minha vida",
                 "Eu não quero realizar meus sonhos", "Eu não quero ter disciplina",
                 "Eu não quero ser respeitado", "Eu não quero ter controle da minha vida"
             ],
             'tasks': {},
-            'active_hours': [8, 22],
             'tts_speed': 2,
             'consecutive_completion_days': 0,
             'last_completion_date': None
@@ -224,11 +223,6 @@ class IdentityRejectionSystem:
             print(f"Erro ao reproduzir áudio: {e}")
             self.log_event("error_tts", str(e))
 
-    def is_active_hour(self):
-        current_hour = datetime.now().hour
-        start, end = self.config['active_hours']
-        return start <= current_hour < end
-
     def all_tasks_completed(self):
         if not self.tasks:
             return False 
@@ -286,7 +280,7 @@ class IdentityRejectionSystem:
     def run_rejection_loop(self):
         while self.running:
             try:
-                if not self.is_active_hour() or self.study_mode or self.all_tasks_completed():
+                if self.study_mode or self.all_tasks_completed():
                     time.sleep(60) 
                     continue
 
@@ -300,8 +294,13 @@ class IdentityRejectionSystem:
                         break 
                     time.sleep(1)
                 
-                if self.running and not self.study_mode and not self.all_tasks_completed() and self.is_active_hour():
+                if self.running and not self.study_mode and not self.all_tasks_completed():
                     self.play_rejection()
+            
+            except Exception as e:
+                print(f"Erro no loop de rejeição: {e}")
+                self.log_event("error_loop", str(e))
+                time.sleep(60)
             
             except Exception as e:
                 print(f"Erro no loop de rejeição: {e}")
@@ -669,15 +668,9 @@ class App:
             spin.pack(side=tk.RIGHT, padx=5)
             return var
 
-        start_h_var = add_spinbox("Hora Início:", "active_hours_start", 0, 23)
-        end_h_var = add_spinbox("Hora Fim:", "active_hours_end", 1, 24)
         tts_var = add_spinbox("Velocidade Fala (TTS):", "tts_speed", -5, 10)
         
-        start_h_var.set(self.system.config['active_hours'][0])
-        end_h_var.set(self.system.config['active_hours'][1])
-
         def save_settings():
-            self.system.config['active_hours'] = [start_h_var.get(), end_h_var.get()]
             self.system.config['tts_speed'] = tts_var.get()
             self.system.save_config()
             self.system.log_event("settings_updated", self.system.config)
