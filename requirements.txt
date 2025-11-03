@@ -1,0 +1,4 @@
+tk
+pystray
+pillow
+pycaw
