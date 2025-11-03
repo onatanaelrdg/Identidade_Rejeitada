@@ -1,4 +1,3 @@
 tk
 pystray
 pillow
-pycaw

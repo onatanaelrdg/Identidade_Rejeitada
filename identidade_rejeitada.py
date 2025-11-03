@@ -44,16 +44,29 @@ IS_LINUX = platform.system() == "Linux"
 
 if IS_WINDOWS:
     import winreg
+    import ctypes
+    
+    # Descobre o caminho completo para o nircmd.exe
     try:
-        from ctypes import cast, POINTER
-        from comtypes import CLSCTX_ALL
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-        
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        VOLUME_CONTROL = cast(interface, POINTER(IAudioEndpointVolume))
-    except Exception:
-        VOLUME_CONTROL = None
+        # Onde o script .py está rodando
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Caminho para o executável na subpasta 'complemento'
+        nircmd_path = os.path.join(script_dir, "complemento", "nircmd.exe")
+    except NameError:
+        # __file__ não é definido em alguns ambientes (ex: REPL)
+        # Tenta o caminho de trabalho atual como fallback
+        script_dir = os.getcwd()
+        nircmd_path = os.path.join(script_dir, "complemento", "nircmd.exe")
+
+    if not os.path.exists(nircmd_path):
+         print("\n" + "="*60)
+         print(" AVISO: nircmd.exe NÃO ENCONTRADO")
+         print(f" O controle de volume não funcionará.")
+         print(f" Esperava encontrá-lo em: {nircmd_path}")
+         print("="*60 + "\n")
+         VOLUME_CONTROL = None # Define como None para sabermos que falhou
+    else:
+         VOLUME_CONTROL = nircmd_path # Armazena o CAMINHO COMPLETO
 else:
     VOLUME_CONTROL = None
 
@@ -149,16 +162,28 @@ def log_event(event_type, details):
         print(f"Erro ao logar evento: {e}")
 
 def set_system_volume(level_percent):
-    """Define o volume mestre do sistema (atualmente, apenas Windows)."""
+    """Define o volume mestre do sistema usando nircmd."""
+    # Agora verifica se VOLUME_CONTROL não é None (ou seja, se o caminho foi encontrado)
     if IS_WINDOWS and VOLUME_CONTROL:
         try:
-            scalar_level = level_percent / 100.0
-            VOLUME_CONTROL.SetMasterVolumeLevelScalar(scalar_level, None)
-            log_event("volume_set", f"{level_percent}%")
+            # O nircmd usa uma escala de 0 (mudo) a 65535 (100%)
+            volume_nircmd = int((level_percent / 100) * 65535)
+            
+            # O creationflags=subprocess.CREATE_NO_WINDOW impede o "flash" do cmd
+            subprocess.run(
+                [VOLUME_CONTROL, 'setsysvolume', str(volume_nircmd)], # Usa o caminho completo
+                check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            log_event("volume_set", f"{level_percent}% (via nircmd)")
+        except FileNotFoundError:
+             print(f"Erro: nircmd.exe não encontrado em {VOLUME_CONTROL}. O volume não foi alterado.")
         except Exception as e:
-            messagebox.showerror("Erro ao Setar Volume", f"Erro ao setar volume: {e}")
+            print(f"Erro ao setar volume (nircmd): {e}")
+    elif IS_WINDOWS:
+        print("Controle de volume (nircmd.exe) não foi encontrado durante a inicialização.")
     else:
-        messagebox.showinfo("Controle de Volume", "Controle de volume não disponível neste sistema operacional.")
+        print("Controle de volume não disponível neste SO.")
 
 # ---
 # MECÂNICA 1: O REPRODUTOR (DAEMON)
