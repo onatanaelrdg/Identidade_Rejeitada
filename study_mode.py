@@ -91,21 +91,21 @@ class StudyModeApp:
         self.root = root
         self.root.config(bg="#212121")
         
-        window_width = 400
-        window_height = 100
+        window_width = 600
+        window_height = 150
         
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         
         # Posição: Canto inferior esquerdo
         x = 25
-        y = screen_height - window_height - 55 # 55px de folga para a barra de tarefas
+        y = screen_height - window_height - 25 # 55px de folga para a barra de tarefas
         
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.root.attributes("-topmost", True)
         self.root.overrideredirect(True)
         self.root.attributes('-transparentcolor', '#212121')
-        self.root.attributes('-alpha', 0.9)
+        self.root.attributes('-alpha', 0.6) 
         
         self.accountability_running = True
         self.create_widgets()
@@ -119,28 +119,37 @@ class StudyModeApp:
         self.root.bind("<B1-Motion>", self.do_move)
 
     def create_widgets(self):
-        style = ttk.Style()
-        style.configure('TCheckbutton', background='#212121', foreground='white')
+        style = ttk.Style()        
+        TRANSPARENT_BG = '#212121' 
+        
+        # --- Configuração dos Estilos ---
+        style.configure('TFrame', background=TRANSPARENT_BG)        
+        style.configure('TLabel', background=TRANSPARENT_BG)        
+        style.configure('TCheckbutton', 
+                        background=TRANSPARENT_BG, 
+                        foreground='#E0E0E0')
+                        
         style.map('TCheckbutton',
-                  background=[('active', '#212121')],
-                  indicatorcolor=[('selected', '#ff4444'), ('!selected', 'white')],
-                  foreground=[('active', 'white')])
+                  background=[('active', TRANSPARENT_BG)],
+                  indicatorcolor=[('selected', '#ff4444'), ('!selected', '#424242')], 
+                  foreground=[('active', '#FFFFFF')]) 
 
-        main_frame = ttk.Frame(self.root, style="TFrame", padding=10)
+        # --- Criação dos Widgets ---
+        main_frame = ttk.Frame(self.root, style="TFrame", padding=5)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.configure(style="TFrame") # Aplica o fundo
-        
-        label = ttk.Label(main_frame, text="MODO ESTUDO/TRABALHO", 
-                          font=("Segoe UI", 16, "bold"),
-                          foreground="#FFD700", style="TLabel")
-        label.pack(pady=(5, 10))
-        
+
         self.completed_var = tk.StringVar(value="0")
         self.completed_checkbox = ttk.Checkbutton(main_frame, text="Voltar ao Gerenciador",
                                                   variable=self.completed_var, 
                                                   command=self.on_checkbox_toggle,
                                                   style='TCheckbutton')
-        self.completed_checkbox.pack()
+        self.completed_checkbox.pack(pady=(5, 5)) # Adicionado pady
+
+        label = ttk.Label(main_frame, text="MODO ESTUDO/TRABALHO", 
+                          font=("Segoe UI", 30, "bold"),
+                          foreground="#FF0000", 
+                          style="TLabel")
+        label.pack(pady=(5, 5))
 
     def on_checkbox_toggle(self):
         """Volta para o gerenciador principal."""
