@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-GERENCIADOR DE IDENTIDADE REJEITADA v2.2
+GERENCIADOR DE IDENTIDADE REJEITADA v2.3
 - Divisão entre tarefas persitentes e tarefas temporárias
 - Mecânica dividida em Daemon (serviço) e Manager (GUI)
+- Modo estudo/trabalho dedicado
 """
 
 import os
@@ -450,8 +451,6 @@ class App:
         # Carrega os dados de config
         self.config_data = load_config_data()
         self.tasks = self.config_data.get('tasks', {})
-        self.accountability_thread = None
-        self.accountability_running = False
         self.temp_tasks = load_temp_tasks()
         self.temp_task_widgets = {}
         
@@ -463,8 +462,9 @@ class App:
         self.update_task_list()
         
         # Sincroniza o checkbox com o status do config
+        # Se o app for aberto e o modo estudo já estiver ativo,
+        # o usuário pode desativá-lo por aqui.
         self.study_mode_var.set(self.config_data.get('study_mode', False))
-        self.toggle_study_mode_overlay(self.study_mode_var.get())
 
     def setup_style(self):
         self.style = ttk.Style()
@@ -499,11 +499,6 @@ class App:
                                        variable=self.study_mode_var, command=self.toggle_study_mode)
         study_button.pack(anchor=tk.W, pady=5)
         
-        self.study_mode_overlay = tk.Label(self.root, text="MODO ESTUDO/TRABALHO",
-                                           font=("Segoe UI", 14, "bold"),
-                                           fg="#FFD700", bg="#1A1A1A",
-                                           relief=tk.SOLID, borderwidth=1)
-
         # --- Frame Principal de Tarefas (agora um container) ---
         tasks_container_frame = ttk.Frame(self.main_frame)
         tasks_container_frame.pack(fill=tk.BOTH, expand=True)
@@ -896,12 +891,6 @@ class App:
         height = settings_win.winfo_reqheight()
         center_window(settings_win, width, height)
 
-    def toggle_study_mode_overlay(self, state):
-        if state:
-            self.study_mode_overlay.place(relx=0, rely=1.0, anchor='sw')
-        else:
-            self.study_mode_overlay.place_forget()
-
     def toggle_study_mode(self):
         state = self.study_mode_var.get()
         
@@ -910,48 +899,33 @@ class App:
         self.config_data['study_mode'] = state
         save_config_data(self.config_data)
         
-        self.toggle_study_mode_overlay(state)
-        
         if state:
+            # --- INICIA MODO ESTUDO ---
             log_event("study_mode_on", "Modo Estudo/Trabalho ativado (via GUI).")
-            # Inicia a thread de verificação
-            self.accountability_running = True
-            self.accountability_thread = threading.Thread(target=self.run_accountability_check, daemon=True)
-            self.accountability_thread.start()
+            
+            # 1. Encontra e executa o script de modo estudo
+            try:
+                # Tenta encontrar o script 'study_mode.py' na mesma pasta do script principal
+                script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "study_mode.py")
+                if not os.path.exists(script_path):
+                    script_path = "study_mode.py" # Tenta no CWD como fallback
+                
+                subprocess.Popen(["pythonw", script_path])
+                
+                # 2. Fecha o gerenciador
+                self.quit_app() 
+                
+            except Exception as e:
+                print(f"Erro ao iniciar o modo estudo: {e}")
+                messagebox.showerror("Erro", "Não foi possível iniciar o 'study_mode.py'. Verifique se o arquivo está na pasta.")
+                # Desmarca o botão se falhar
+                self.study_mode_var.set(False)
+                self.config_data['study_mode'] = False
+                save_config_data(self.config_data)
+        
         else:
+            # --- DESATIVA MODO ESTUDO (se foi desmarcado na GUI) ---
             log_event("study_mode_off", "Modo Estudo/Trabalho desativado (via GUI).")
-            # Para a thread de verificação
-            self.accountability_running = False
-
-    def run_accountability_check(self):
-        """Thread de verificação que roda DENTRO da GUI, quando ela está aberta."""
-        while self.accountability_running:
-            interval = random.randint(15 * 60, 45 * 60)
-            
-            slept_time = 0
-            while slept_time < interval and self.accountability_running:
-                time.sleep(1)
-                slept_time += 1
-            
-            if self.accountability_running:
-                # Precisa agendar a messagebox na thread principal do tkinter
-                self.root.after(0, self.ask_accountability)
-
-    def ask_accountability(self):
-        """Mostra o popup de verificação."""
-        if not self.accountability_running:
-            return
-            
-        self.show_window() # Traz a janela para frente
-        answer = messagebox.askyesno("Verificação de Foco",
-                                       "Você ainda está fazendo o que disse que faria?",
-                                       parent=self.root)
-        if not answer:
-            self.study_mode_var.set(False)
-            self.toggle_study_mode() # Isso vai salvar o config e parar a thread
-            log_event("accountability_check_failed", "Usuário respondeu 'Não'.")
-        else:
-            log_event("accountability_check_ok", "Usuário respondeu 'Sim'.")
             
     def show_popup_message(self, title, message):
         messagebox.showinfo(title, message)
