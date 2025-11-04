@@ -324,8 +324,8 @@ class IdentityRejectionSystem:
         consecutive_days = self.config.get('consecutive_completion_days', 0)
         bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
-        base_min_int = 20
-        base_max_int = 90
+        base_min_int = 5
+        base_max_int = 30
         min_int = base_min_int + bonus_min
         max_int = base_max_int + bonus_max
         if min_int > max_int:
@@ -338,17 +338,16 @@ class IdentityRejectionSystem:
             return
 
         rejection = random.choice(self.config['rejections'])
-        tts_speed = self.config.get('tts_speed', 2)
+        tts_speed = self.config.get('tts_speed', 3)
         
         log_event("rejection_played", rejection)
-        
-        # Chama a função de popup (que usa o root do daemon)
-        self.popup_callback(rejection)
         
         self.set_volume(80)
         
         for _ in range(3):
             if not self.running: break
+            
+            self.popup_callback(rejection) 
             self.speak_text(rejection, tts_speed)
             time.sleep(0.5) 
             
@@ -408,6 +407,10 @@ def show_standalone_popup(root, text):
         popup.title("IDENTIDADE REJEITADA")
         center_window(popup, 500, 200)
         popup.attributes("-topmost", True)
+        
+        popup.overrideredirect(True) 
+        popup.protocol("WM_DELETE_WINDOW", lambda: None) 
+        
         popup.configure(bg="#1A0000")
         
         label = tk.Label(popup, text=text, font=("Impact", 20),
@@ -714,10 +717,11 @@ class App:
             rejection = random.choice(temp_config['rejections'])
             tts_speed = temp_config.get('tts_speed', 2)
             
-            set_system_volume(80) # Chama a função global
+            set_system_volume(80) # Chama a função global  
             
             # Re-usa a lógica de 'speak_text'
             if IS_WINDOWS:
+                show_standalone_popup(self.root, rejection)   
                 subprocess.run([
                     'powershell', '-Command',
                     f'Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
