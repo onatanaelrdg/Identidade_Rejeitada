@@ -749,7 +749,7 @@ class App:
         def add_item():
             task_name = entry.get()
             if task_name:
-                task_id = str(int(time.time())) 
+                Guintask_id = str(int(time.time())) 
                 current_tasks[task_id] = {
                     "name": task_name,
                     "created_on": date.today().isoformat(),
@@ -779,7 +779,11 @@ class App:
         ttk.Button(btn_frame, text="Add", command=add_item).pack(side=tk.LEFT)
         ttk.Button(frame, text="Remover Selecionada", command=remove_item).pack(fill=tk.X, pady=5)
         
-        manager_win.protocol("WM_DELETE_WINDOW", self.update_task_list)
+        def on_close_manager():
+            manager_win.destroy()
+            self.update_task_list()
+
+        manager_win.protocol("WM_DELETE_WINDOW", on_close_manager)
 
     def open_rejection_manager(self):
         self.manage_list_items("Gerenciar Rejeições", "rejections")
