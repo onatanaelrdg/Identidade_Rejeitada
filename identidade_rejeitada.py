@@ -199,6 +199,14 @@ def load_temp_tasks():
         print(f"Erro ao carregar tarefas temporárias: {e}")
         return []
 
+def center_window(win, width, height):
+    """Centraliza uma janela tk.Tk ou tk.Toplevel no monitor."""
+    screen_width = win.winfo_screenwidth()
+    screen_height = win.winfo_screenheight()
+    x = (screen_width // 2) - (width // 2)
+    y = (screen_height // 2) - (height // 2)
+    win.geometry(f'{width}x{height}+{x}+{y}')
+
 # ---
 # MECÂNICA 1: O REPRODUTOR (DAEMON)
 # ---
@@ -397,7 +405,7 @@ def show_standalone_popup(root, text):
     try:
         popup = tk.Toplevel(root)
         popup.title("IDENTIDADE REJEITADA")
-        popup.geometry("500x200")
+        center_window(popup, 500, 200)
         popup.attributes("-topmost", True)
         popup.configure(bg="#1A0000")
         
@@ -437,7 +445,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("600x500")
+        center_window(self.root, 600, 500)
         
         # Carrega os dados de config
         self.config_data = load_config_data()
@@ -638,7 +646,7 @@ class App:
     def get_proof(self, task_name):
         proof_win = tk.Toplevel(self.root)
         proof_win.title(f"Prova de Conclusão: {task_name}")
-        proof_win.geometry("400x300")
+        center_window(proof_win, 400, 300)
         proof_win.transient(self.root)
         proof_win.grab_set()
         
@@ -686,7 +694,7 @@ class App:
     def open_menu(self):
         menu_win = tk.Toplevel(self.root)
         menu_win.title("Menu")
-        menu_win.geometry("300x280") # Aumentei a altura
+        center_window(menu_win, 300, 280) # Aumentei a altura
         menu_win.transient(self.root)
         menu_win.grab_set()
         
@@ -733,7 +741,7 @@ class App:
     def manage_list_items(self, title, item_list_key):
         manager_win = tk.Toplevel(self.root)
         manager_win.title(title)
-        manager_win.geometry("400x350")
+        center_window(manager_win, 400, 350)
         manager_win.transient(self.root)
         manager_win.grab_set()
         
@@ -787,7 +795,7 @@ class App:
     def open_task_manager(self):
         manager_win = tk.Toplevel(self.root)
         manager_win.title("Gerenciar Tarefas de Rotina") # Título alterado
-        manager_win.geometry("400x350")
+        center_window(manager_win, 400, 350)
         manager_win.transient(self.root)
         manager_win.grab_set()
         
@@ -881,6 +889,12 @@ class App:
             settings_win.destroy()
 
         ttk.Button(frame, text="Salvar", command=save_settings).pack(pady=15)
+        
+        # Centraliza a janela após ela ser desenhada
+        settings_win.update_idletasks()
+        width = settings_win.winfo_reqwidth()
+        height = settings_win.winfo_reqheight()
+        center_window(settings_win, width, height)
 
     def toggle_study_mode_overlay(self, state):
         if state:
@@ -989,7 +1003,7 @@ class App:
 
     def show_temp_task_frame(self):
         """Expande a janela e mostra o frame de tarefas temporárias."""
-        self.root.geometry("900x500")
+        center_window(self.root, 900, 500)
         self.temp_task_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
         self.update_temp_task_list()
 
