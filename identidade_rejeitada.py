@@ -99,7 +99,7 @@ Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
 
 
 def load_config_data():
-    """Carrega os dados de configuração do JSON."""
+    """Carrega os dados de configuração do JSON e migra o formato antigo."""
     default_config = {
         'rejections': [
             "Eu não quero emagrecer", "Eu não quero falar inglês fluentemente",
@@ -115,6 +115,7 @@ def load_config_data():
         'study_mode': False # Chave de comunicação
     }
     
+    config = default_config
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -123,13 +124,33 @@ def load_config_data():
             for key, value in default_config.items():
                 if key not in config:
                     config[key] = value
-            return config
             
         except json.JSONDecodeError:
-            return default_config
-    else:
-        save_config_data(default_config)
-        return default_config
+            config = default_config
+    
+    # --- MIGRAÇÃO DE TAREFAS ---
+    # Verifica se as tarefas estão no formato antigo e as atualiza
+    migrated = False
+    tasks = config.get('tasks', {})
+    for task_id, task in tasks.items():
+        if 'schedule_type' not in task:
+            task['schedule_type'] = 'daily'
+            task['schedule_days'] = [0, 1, 2, 3, 4, 5, 6] # Seg=0, Dom=6
+            migrated = True
+        
+        # Adiciona o status 'em progresso' se não existir
+        if 'status' not in task:
+            task['status'] = 'em progresso'
+            migrated = True
+    
+    if migrated:
+        print("Migrando formato antigo de tarefas...")
+        save_config_data(config)
+    
+    if not os.path.exists(CONFIG_FILE):
+        save_config_data(config)
+        
+    return config
 
 def save_config_data(data):
     """Salva os dados de configuração no JSON."""
@@ -207,6 +228,33 @@ def center_window(win, width, height):
     x = (screen_width // 2) - (width // 2)
     y = (screen_height // 2) - (height // 2)
     win.geometry(f'{width}x{height}+{x}+{y}')
+
+def get_tasks_for_today():
+    """Filtra as tarefas de rotina e temp que são para hoje."""
+    config = load_config_data()
+    routine_tasks = config.get('tasks', {})
+    
+    today_weekday = datetime.now().weekday() # Segunda = 0, Domingo = 6
+    
+    tasks_for_today = {}
+    for task_id, task in routine_tasks.items():
+        
+        # Pula tarefas que já estão 'encerradas'
+        if task.get('status', 'em progresso') != 'em progresso':
+            continue
+            
+        # Garante que funciona mesmo se uma tarefa for mal formatada
+        schedule_type = task.get('schedule_type', 'daily')
+        
+        if schedule_type == 'daily':
+            tasks_for_today[task_id] = task
+        elif schedule_type == 'custom':
+            if today_weekday in task.get('schedule_days', []):
+                tasks_for_today[task_id] = task
+                
+    temp_tasks = load_temp_tasks()
+    
+    return tasks_for_today, temp_tasks
 
 # ---
 # MECÂNICA 1: O REPRODUTOR (DAEMON)
@@ -297,17 +345,20 @@ class IdentityRejectionSystem:
             log_event("error_tts", str(e))
 
     def all_tasks_completed(self):
-        # 1. Checa tarefas de rotina
+        # 1. Carrega as tarefas filtradas para o dia de HOJE
+        tasks_for_today, temp_tasks = get_tasks_for_today()
+
+        # 2. Checa tarefas de rotina de hoje
         all_routine_completed = True
-        if not self.tasks:
+        if not tasks_for_today: # Se não há tarefas de rotina para hoje, não conta como "feito"
             all_routine_completed = False 
-        for task in self.tasks.values():
+        
+        for task in tasks_for_today.values():
             if not task.get('completed_on') == date.today().isoformat():
                 all_routine_completed = False
                 break
         
-        # 2. Checa tarefas temporárias
-        temp_tasks = load_temp_tasks()
+        # 3. Checa tarefas temporárias
         all_temp_completed = not bool(temp_tasks) # True se a lista estiver vazia
 
         if all_routine_completed and all_temp_completed:
@@ -324,8 +375,8 @@ class IdentityRejectionSystem:
         consecutive_days = self.config.get('consecutive_completion_days', 0)
         bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
-        base_min_int = 5
-        base_max_int = 30
+        base_min_int = 2
+        base_max_int = 3
         min_int = base_min_int + bonus_min
         max_int = base_max_int + bonus_max
         if min_int > max_int:
@@ -575,41 +626,52 @@ class App:
         self.task_widgets = {}
         today_str = date.today().isoformat()
         
-        # Recarrega tasks do config
-        self.config_data = load_config_data()
-        self.tasks = self.config_data.get('tasks', {})
+        # Recarrega tasks de HOJE
+        self.tasks_for_today, _ = get_tasks_for_today()
         
-        if not self.tasks:
-            ttk.Label(self.scrollable_frame, text="Nenhuma atividade cadastrada.\nVá em Menu > Gerenciar Atividades.",
+        if not self.tasks_for_today:
+            ttk.Label(self.scrollable_frame, text="Nenhuma tarefa de rotina para hoje.",
                       font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
-            return
-
-        for task_id, task in self.tasks.items():
-            task_frame = ttk.Frame(self.scrollable_frame, padding=5)
-            task_frame.pack(fill=tk.X, pady=2)
-            
-            var = tk.BooleanVar()
-            var.set(task.get('completed_on') == today_str)
-            
-            cb = ttk.Checkbutton(task_frame, text=task['name'], variable=var,
-                                 command=lambda v=var, tid=task_id: self.on_task_check(v, tid))
-            cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            if task.get('completed_on') == today_str:
-                cb.config(state=tk.DISABLED)
-                proof_text = "Concluído"
-                if task.get('proof_type') == 'text':
-                    proof_text = f"Concluído: '{task.get('proof', '')[:20]}...'"
-                elif task.get('proof_type') == 'image':
-                    proof_text = f"Concluído: (Imagem)"
+            # Não retorne, para que o usuário ainda possa ver o painel temp
+        else:
+            for task_id, task in self.tasks_for_today.items():
+                task_frame = ttk.Frame(self.scrollable_frame, padding=5)
+                task_frame.pack(fill=tk.X, pady=2)
                 
-                ttk.Label(task_frame, text=proof_text, font=("Segoe UI", 9, "italic"), foreground="#00A000").pack(side=tk.RIGHT)
-            
-            self.task_widgets[task_id] = {'var': var, 'cb': cb}
+                var = tk.BooleanVar()
+                var.set(task.get('completed_on') == today_str)
+                
+                cb = ttk.Checkbutton(task_frame, text=task['name'], variable=var,
+                                     command=lambda v=var, tid=task_id: self.on_task_check(v, tid))
+                cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                
+                if task.get('completed_on') == today_str:
+                    cb.config(state=tk.DISABLED)
+                    proof_text = "Concluído"
+                    if task.get('proof_type') == 'text':
+                        proof_text = f"Concluído: '{task.get('proof', '')[:20]}...'"
+                    elif task.get('proof_type') == 'image':
+                        proof_text = f"Concluído: (Imagem)"
+                    
+                    ttk.Label(task_frame, text=proof_text, font=("Segoe UI", 9, "italic"), foreground="#00A000").pack(side=tk.RIGHT)
+                
+                self.task_widgets[task_id] = {'var': var, 'cb': cb}
+
+        # Atualiza a lista de tarefas temporárias também, se estiver visível
+        if self.temp_task_frame.winfo_ismapped():
+            self.update_temp_task_list()
 
     def on_task_check(self, var, task_id):
         if var.get(): 
-            task = self.tasks[task_id]
+            # Carrega a config completa para achar a task
+            self.config_data = load_config_data()
+            self.tasks = self.config_data.get('tasks', {})
+            
+            if task_id not in self.tasks:
+                print(f"Erro: Task ID {task_id} não encontrado no config.")
+                return
+
+            task = self.tasks[task_id] # Acessa a task pelo ID
             proof_type, proof_data = self.get_proof(task['name'])
             
             if proof_data:
@@ -621,16 +683,20 @@ class App:
                 save_config_data(self.config_data)
                 
                 log_event("task_completed", f"{task_id}: {task['name']}")
-                self.update_task_list()
+                self.update_task_list() # Atualiza a lista da home
                 
-                # Verifica se TODAS as tarefas (rotina e temp) foram completas
+                # Verifica se TODAS as tarefas (rotina de HOJE e temp) foram completas
+                tasks_for_today, temp_tasks = get_tasks_for_today()
+
                 all_routine_done = True
-                for t in self.tasks.values():
+                if not tasks_for_today:
+                     all_routine_done = False 
+                for t in tasks_for_today.values():
                     if not t.get('completed_on') == date.today().isoformat():
                         all_routine_done = False
                         break
                 
-                all_temp_done = not bool(load_temp_tasks())
+                all_temp_done = not bool(temp_tasks)
 
                 if all_routine_done and all_temp_done:
                     messagebox.showinfo("Parabéns!", "Todas as atividades de hoje foram concluídas! Os áudios estão desativados por hoje.")
@@ -794,71 +860,101 @@ class App:
     def open_task_manager(self):
         manager_win = tk.Toplevel(self.root)
         manager_win.title("Gerenciar Tarefas de Rotina") # Título alterado
-        center_window(manager_win, 400, 350)
+        center_window(manager_win, 500, 400) # Ligeiramente maior
         manager_win.transient(self.root)
         manager_win.grab_set()
-        
-        current_config = load_config_data()
-        current_tasks = current_config.get('tasks', {})
         
         frame = ttk.Frame(manager_win, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
 
-        listbox_frame = ttk.Frame(frame)
-        listbox_frame.pack(fill=tk.BOTH, expand=True)
-        scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL)
-        listbox = tk.Listbox(listbox_frame, yscrollcommand=scrollbar.set, bg="#F0F0F0", selectbackground="#007ACC")
-        scrollbar.config(command=listbox.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # --- Treeview (Lista de Tarefas) ---
+        tree_frame = ttk.Frame(frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
         
-        for task_id, task in current_tasks.items():
-            listbox.insert(tk.END, f"{task['name']} (ID: {task_id})")
-            
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        task_tree = ttk.Treeview(tree_frame, columns=("Nome", "Agenda"), show="headings", yscrollcommand=tree_scroll.set)
+        task_tree.heading("Nome", text="Nome da Tarefa")
+        task_tree.heading("Agenda", text="Agenda")
+        task_tree.column("Nome", width=250)
+        task_tree.column("Agenda", width=100)
+        
+        task_tree.pack(fill=tk.BOTH, expand=True)
+        tree_scroll.config(command=task_tree.yview)
+
+        # --- Botões ---
         btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        
-        entry = ttk.Entry(btn_frame)
-        entry.pack(fill=tk.X, expand=True, side=tk.LEFT, padx=(0, 5))
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
 
-        def add_item():
-            task_name = entry.get()
-            if task_name:
-                task_id = str(int(time.time())) # Corrigido: Guintask_id -> task_id
-                current_tasks[task_id] = {
-                    "name": task_name,
-                    "created_on": date.today().isoformat(),
-                    "completed_on": None,
-                    "proof": None
-                }
-                listbox.insert(tk.END, f"{task_name} (ID: {task_id})")
-                entry.delete(0, tk.END)
-                current_config['tasks'] = current_tasks
-                save_config_data(current_config)
-                self.update_task_list()
+        def populate_tree():
+            # Limpa a árvore
+            for item in task_tree.get_children():
+                task_tree.delete(item)
+                
+            current_config = load_config_data()
+            current_tasks = current_config.get('tasks', {})
+            
+            dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
-        def remove_item():
-            selected_indices = listbox.curselection()
-            if not selected_indices:
+            for task_id, task in current_tasks.items():
+                
+                # Só mostra tarefas 'em progresso'
+                if task.get('status', 'em progresso') != 'em progresso':
+                    continue
+                    
+                nome = task.get('name')
+                agenda_tipo = task.get('schedule_type', 'daily')
+                
+                if agenda_tipo == 'daily':
+                    agenda_str = "Todos os dias"
+                else:
+                    dias = task.get('schedule_days', [])
+                    agenda_str = ", ".join([dias_semana[i] for i in dias])
+                    if not agenda_str: agenda_str = "Nunca"
+                
+                # O ID é armazenado internamente (iid) para o botão de remover
+                task_tree.insert("", tk.END, iid=task_id, values=(nome, agenda_str))
+
+        def open_add_task_window():
+            # Abre a janela de adicionar/editar
+            self.show_add_task_window()
+            # Atualiza a árvore depois que a janela de add fechar
+            populate_tree() 
+            # Atualiza a home
+            self.update_task_list() 
+
+        def end_task(): # Renomeado de remove_item
+            selected_items = task_tree.selection()
+            if not selected_items:
                 return
-            selected_text = listbox.get(selected_indices[0])
-            task_id = selected_text.split(" (ID: ")[1].replace(")", "")
+            
+            task_id = selected_items[0] # Pega o iid que salvamos
+            
+            current_config = load_config_data()
+            current_tasks = current_config.get('tasks', {})
             
             if task_id in current_tasks:
-                del current_tasks[task_id]
-                listbox.delete(selected_indices[0])
-                current_config['tasks'] = current_tasks
-                save_config_data(current_config)
-                self.update_task_list()
+                task_name = current_tasks[task_id]['name']
+                if messagebox.askyesno("Confirmar Encerramento", 
+                                        f"Tem certeza que quer 'Encerrar' a tarefa:\n\n{task_name}\n\n(Ela não será excluída, apenas ocultada)", 
+                                        parent=manager_win):
+                    
+                    # Altera o status em vez de deletar
+                    current_tasks[task_id]['status'] = 'encerrado' 
+                    
+                    current_config['tasks'] = current_tasks
+                    save_config_data(current_config)
+                    log_event("task_ended", f"{task_id}: {task_name}")
+                    populate_tree() # Atualiza a lista do gerenciador
+                    self.update_task_list() # Atualiza a lista da home
 
-        ttk.Button(btn_frame, text="Add", command=add_item).pack(side=tk.LEFT)
-        ttk.Button(frame, text="Remover Selecionada", command=remove_item).pack(fill=tk.X, pady=5)
+        ttk.Button(btn_frame, text="Adicionar Nova Tarefa", command=open_add_task_window).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Encerrar Atividade", command=end_task).pack(side=tk.RIGHT) # Texto e comando atualizados
         
-        def on_close_manager():
-            manager_win.destroy()
-            self.update_task_list()
-
-        manager_win.protocol("WM_DELETE_WINDOW", on_close_manager)
+        populate_tree() # Popula a árvore ao abrir
+        
+        manager_win.protocol("WM_DELETE_WINDOW", lambda: [manager_win.destroy(), self.update_task_list()])
 
     def open_rejection_manager(self):
         self.manage_list_items("Gerenciar Rejeições", "rejections")
@@ -1057,21 +1153,126 @@ class App:
                 self.update_temp_task_list() # Atualiza a lista da GUI
                 
                 # Verifica se TUDO foi concluído
+                tasks_for_today, temp_tasks_remaining = get_tasks_for_today()
+                
                 all_routine_done = True
-                self.config_data = load_config_data() # Recarrega
-                for t in self.config_data.get('tasks', {}).values():
+                if not tasks_for_today:
+                    all_routine_done = False
+                for t in tasks_for_today.values():
                     if not t.get('completed_on') == date.today().isoformat():
                         all_routine_done = False
                         break
                 
-                all_temp_done = not bool(tasks) # Checa a lista que acabamos de salvar
+                all_temp_done = not bool(temp_tasks_remaining) # Checa a lista que acabamos de carregar
 
                 if all_routine_done and all_temp_done:
                     messagebox.showinfo("Parabéns!", "Todas as atividades de hoje foram concluídas! Os áudios estão desativados por hoje.")
+                    self.config_data = load_config_data() # Recarrega
                     self.config_data['last_completion_date'] = date.today().isoformat()
                     save_config_data(self.config_data)
             else:
                 var.set(False) # Prova foi cancelada, desmarca o checkbox
+
+    def show_add_task_window(self):
+        """Mostra o popup para adicionar uma nova tarefa de rotina."""
+        
+        add_win = tk.Toplevel(self.root)
+        add_win.title("Adicionar Tarefa de Rotina")
+        add_win.transient(self.root)
+        add_win.grab_set()
+        
+        frame = ttk.Frame(add_win, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # --- Nome da Tarefa ---
+        name_frame = ttk.Frame(frame)
+        name_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(name_frame, text="Nome da Tarefa:").pack(side=tk.LEFT, padx=(0, 10))
+        name_entry = ttk.Entry(name_frame)
+        name_entry.pack(fill=tk.X, expand=True)
+        name_entry.focus()
+        
+        # --- Tipo de Agenda ---
+        ttk.Label(frame, text="Agenda:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 5))
+        
+        schedule_type = tk.StringVar(value="daily")
+        
+        radio_daily = ttk.Radiobutton(frame, text="Todos os dias", variable=schedule_type, value="daily")
+        radio_daily.pack(anchor=tk.W)
+        
+        radio_custom = ttk.Radiobutton(frame, text="Personalizar dias:", variable=schedule_type, value="custom")
+        radio_custom.pack(anchor=tk.W)
+
+        # --- Checkboxes dos Dias ---
+        days_frame = ttk.Frame(frame, padding=(10, 5))
+        days_frame.pack(fill=tk.X)
+        
+        days_vars = []
+        dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+        for i, dia in enumerate(dias_semana):
+            var = tk.BooleanVar(value=True)
+            chk = ttk.Checkbutton(days_frame, text=dia, variable=var, state="disabled")
+            chk.pack(side=tk.LEFT, padx=5, expand=True)
+            days_vars.append(var)
+            
+        def toggle_days_state(*args):
+            if schedule_type.get() == "daily":
+                for i, var in enumerate(days_vars):
+                    var.set(True)
+                    chk = days_frame.winfo_children()[i]
+                    chk.config(state="disabled")
+            else:
+                for i, var in enumerate(days_vars):
+                    # var.set(False) # Descomente se quiser que comecem desmarcados
+                    chk = days_frame.winfo_children()[i]
+                    chk.config(state="normal")
+        
+        schedule_type.trace_add("write", toggle_days_state)
+
+        # --- Botão Salvar ---
+        def save_new_task():
+            task_name = name_entry.get().strip()
+            if not task_name:
+                messagebox.showerror("Erro", "O nome da tarefa não pode estar vazio.", parent=add_win)
+                return
+
+            sched_type = schedule_type.get()
+            sched_days = []
+            if sched_type == 'daily':
+                sched_days = [0, 1, 2, 3, 4, 5, 6]
+            else: # custom
+                sched_days = [i for i, var in enumerate(days_vars) if var.get()]
+
+            if sched_type == 'custom' and not sched_days:
+                if not messagebox.askyesno("Confirmar", "Você não selecionou nenhum dia.\nA tarefa não aparecerá a menos que seja editada.\n\nSalvar mesmo assim?", parent=add_win):
+                    return
+
+            task_id = str(int(time.time()))
+            new_task = {
+                "name": task_name,
+                "created_on": date.today().isoformat(),
+                "completed_on": None,
+                "proof": None,
+                "schedule_type": sched_type,
+                "schedule_days": sched_days,
+                "status": "em progresso" # <<< ADICIONADO AQUI
+            }
+            
+            current_config = load_config_data()
+            current_config['tasks'][task_id] = new_task
+            save_config_data(current_config)
+            
+            add_win.destroy()
+
+        ttk.Button(frame, text="Salvar", command=save_new_task).pack(pady=(15, 0))
+        
+        # Centraliza a janela
+        add_win.update_idletasks()
+        width = add_win.winfo_reqwidth()
+        height = add_win.winfo_reqheight()
+        center_window(add_win, width, height)
+
+        self.root.wait_window(add_win)
 
 # ---
 # INICIALIZAÇÃO E REGISTRO
