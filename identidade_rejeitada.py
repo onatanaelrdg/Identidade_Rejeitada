@@ -194,11 +194,23 @@ def set_system_volume(level_percent):
             volume_nircmd = int((level_percent / 100) * 65535)
             
             # O creationflags=subprocess.CREATE_NO_WINDOW impede o "flash" do cmd
+            
+            # --- MUDANÇA AQUI ---
+            # 1. Tira o sistema do mudo (se estiver)
+            subprocess.run(
+                [VOLUME_CONTROL, 'mutesysvolume', '0'], # '0' = Desmutar
+                check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # 2. Define o volume para 80% (ou o valor passado)
             subprocess.run(
                 [VOLUME_CONTROL, 'setsysvolume', str(volume_nircmd)], # Usa o caminho completo
                 check=True,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            # --- FIM DA MUDANÇA ---
+
             log_event("volume_set", f"{level_percent}% (via nircmd)")
         except FileNotFoundError:
              print(f"Erro: nircmd.exe não encontrado em {VOLUME_CONTROL}. O volume não foi alterado.")
@@ -376,7 +388,7 @@ class IdentityRejectionSystem:
         bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
         base_min_int = 1
-        base_max_int = 2
+        base_max_int = 3
         min_int = base_min_int + bonus_min
         max_int = base_max_int + bonus_max
         if min_int > max_int:
