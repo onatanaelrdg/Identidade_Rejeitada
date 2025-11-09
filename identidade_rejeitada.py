@@ -268,20 +268,20 @@ class IdentityRejectionSystem:
         self.tasks = self.config.get('tasks', {})
         self.running = False
         self.rejection_thread = None
-        self.reset_tasks_if_new_day()
+        self.run_new_day_check() # <--- MUDANÇA DE NOME AQUI
 
     def reload_config(self):
         """Recarrega a configuração para verificar status (study_mode, tasks)."""
         self.config = load_config_data()
         self.tasks = self.config.get('tasks', {})
-        self.reset_tasks_if_new_day()
+        # self.reset_tasks_if_new_day() # <--- REMOVIDO DESTA FUNÇÃO
 
     def save_config(self):
         """Salva o estado atual (usado para dias consecutivos, etc.)."""
         self.config['tasks'] = self.tasks
         save_config_data(self.config)
             
-    def reset_tasks_if_new_day(self):
+    def run_new_day_check(self):
         today_str = date.today().isoformat()
         last_completion = self.config.get('last_completion_date')
         
@@ -375,8 +375,8 @@ class IdentityRejectionSystem:
         consecutive_days = self.config.get('consecutive_completion_days', 0)
         bonus_min = consecutive_days * 5
         bonus_max = consecutive_days * 10
-        base_min_int = 2
-        base_max_int = 3
+        base_min_int = 1
+        base_max_int = 2
         min_int = base_min_int + bonus_min
         max_int = base_max_int + bonus_max
         if min_int > max_int:
