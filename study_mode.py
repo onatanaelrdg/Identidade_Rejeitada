@@ -174,6 +174,13 @@ class SetupWindow:
                                command=self.on_cancel, relief=tk.FLAT, cursor="hand2")
         btn_cancel.pack(fill=tk.X, pady=5)
 
+    def _activate_study_mode_config(self):
+        """Ativa o modo estudo no arquivo de configuração."""
+        config = load_config_data()
+        config['study_mode'] = True
+        save_config_data(config)
+        log_event("study_mode_on", "Modo Estudo/Trabalho ativado (via GUI).")
+
     def on_start(self):
         task = self.entry_task.get().strip()
         time_str = self.combo_time.get()
@@ -186,6 +193,8 @@ class SetupWindow:
         if not task:
             messagebox.showwarning("Sem Foco", "Escreva o que vai fazer para ativar o contrato.\nSem contrato, sem silêncio.", parent=self.root)
             return
+
+        self._activate_study_mode_config()
         
         # Fecha esta janela e inicia o overlay
         self.root.destroy()
