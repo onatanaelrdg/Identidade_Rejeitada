@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-GERENCIADOR DE IDENTIDADE REJEITADA v2.3
-- Divisão entre tarefas persitentes e tarefas temporárias
-- Mecânica dividida em Daemon (serviço) e Manager (GUI)
-- Modo estudo/trabalho dedicado
+GERENCIADOR DE IDENTIDADE REJEITADA v3
 """
 
 import os
@@ -80,13 +77,18 @@ APP_DIR_NAME = "IdentidadeRejeitadaApp"
 # Movidas para o escopo global para que tanto o Daemon quanto a GUI possam usá-las
 
 def get_app_data_dir():
-    if IS_WINDOWS:
-        app_data_path = os.path.join(os.getenv('APPDATA'), APP_DIR_NAME)
-    elif IS_MACOS:
-        app_data_path = os.path.join(Path.home(), 'Library', 'Application Support', APP_DIR_NAME)
-    else:
-        app_data_path = os.path.join(Path.home(), '.config', APP_DIR_NAME)
+    """Define o diretório de dados relativo ao local do script (modo portátil)."""
+    try:
+        # Pega a pasta onde este arquivo .py está localizado
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        # Fallback caso __file__ não esteja definido (ex: alguns compiladores)
+        base_dir = os.getcwd()
     
+    # Define a pasta 'config' dentro do diretório do script
+    app_data_path = os.path.join(base_dir, "config")
+    
+    # Cria a pasta se não existir
     Path(app_data_path).mkdir(parents=True, exist_ok=True)
     return app_data_path
 
@@ -96,6 +98,95 @@ LOG_FILE = os.path.join(APP_DATA_DIR, "logging.json")
 PROOFS_DIR = os.path.join(APP_DATA_DIR, "provas")
 TEMP_TASKS_FILE = os.path.join(APP_DATA_DIR, "temp_tasks.txt")
 Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
+
+def run_backup_system():
+    """
+    Sistema de Backup Híbrido:
+    1. Snapshot Diário: Copia a pasta 'config' inteira para AppData no primeiro uso do dia.
+    2. Rotação: Mantém versões 'recente' e 'anterior' do config.json e logging.json.
+    """
+    try:
+        # --- DEFINIÇÃO DE CAMINHOS ---
+        # Origem: A pasta 'config' local onde o script está rodando
+        local_config_dir = get_app_data_dir()
+        
+        # Destino: AppData/IdentidadeRejeitadaApp/Backups/AAAA-MM-DD
+        if IS_WINDOWS:
+            appdata_base = os.path.join(os.getenv('APPDATA'), APP_DIR_NAME, 'Backups')
+        else:
+            appdata_base = os.path.join(Path.home(), '.local', 'share', APP_DIR_NAME, 'Backups')
+            
+        today_str = date.today().strftime('%Y-%m-%d')
+        daily_backup_dir = os.path.join(appdata_base, today_str)
+        
+        # Garante que a pasta do dia existe
+        os.makedirs(daily_backup_dir, exist_ok=True)
+
+        # ==============================================================================
+        # CAMADA 1: SNAPSHOT DO INÍCIO DO DIA (Pasta Completa)
+        # ==============================================================================
+        # Verifica se já fizemos o backup completo hoje. Se não, faz.
+        snapshot_dir = os.path.join(daily_backup_dir, "Start_of_Day_Snapshot")
+        
+        if not os.path.exists(snapshot_dir):
+            try:
+                # Copia a pasta config inteira (incluindo provas e logs)
+                # O dirs_exist_ok=True é para Python 3.8+, mas como checamos exists antes, copytree comum serve
+                # Mas para garantir compatibilidade caso a pasta esteja vazia:
+                if os.path.exists(local_config_dir):
+                    shutil.copytree(local_config_dir, snapshot_dir)
+                    print(f"Backup diário (Snapshot) criado em: {snapshot_dir}")
+            except Exception as e:
+                print(f"Erro ao criar Snapshot do dia: {e}")
+
+        # ==============================================================================
+        # CAMADA 2: ROTAÇÃO DE ARQUIVOS (Recente / Anterior)
+        # ==============================================================================
+        # Lista dos arquivos críticos que queremos rotacionar
+        critical_files = ["config.json", "logging.json"]
+        
+        for filename in critical_files:
+            source_file = os.path.join(local_config_dir, filename)
+            
+            # Só faz backup se o arquivo existir e for válido (básico)
+            if not os.path.exists(source_file):
+                continue
+
+            # Validação básica de JSON para não backupear arquivo corrompido
+            try:
+                with open(source_file, 'r', encoding='utf-8') as f:
+                    json.load(f)
+            except (json.JSONDecodeError, Exception):
+                print(f"ALERTA: {filename} parece corrompido. Backup rotativo ignorado.")
+                continue
+
+            # Define nomes dos destinos
+            name_only, ext = os.path.splitext(filename)
+            path_recente = os.path.join(daily_backup_dir, f"{name_only}_recente{ext}")
+            path_anterior = os.path.join(daily_backup_dir, f"{name_only}_anterior{ext}")
+
+            try:
+                # Lógica de Rotação:
+                # 1. Se existe 'recente', ele vira 'anterior'
+                if os.path.exists(path_recente):
+                    if os.path.exists(path_anterior):
+                        os.remove(path_anterior) # Remove o velho 'anterior'
+                    
+                    try:
+                        os.rename(path_recente, path_anterior)
+                    except OSError:
+                        # Fallback se rename falhar (ex: windows lock), tenta copy/delete
+                        shutil.copy2(path_recente, path_anterior)
+                        os.remove(path_recente)
+
+                # 2. O arquivo atual vira o novo 'recente'
+                shutil.copy2(source_file, path_recente)
+                
+            except Exception as e:
+                print(f"Erro na rotação de {filename}: {e}")
+
+    except Exception as e:
+        print(f"Falha crítica no sistema de backup: {e}")
 
 
 def load_config_data():
@@ -153,16 +244,43 @@ def load_config_data():
     return config
 
 def save_config_data(data):
-    """Salva os dados de configuração no JSON."""
+    """Salva os dados de configuração de forma ATÔMICA (Anti-Apagão)."""
+    # Cria um nome para o arquivo temporário
+    temp_file = f"{CONFIG_FILE}.tmp"
+    
     try:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        # 1. Escreve os dados no arquivo temporário
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+            
+            # --- BLINDAGEM CONTRA FALHA DE ENERGIA ---
+            f.flush()             # 1. Empurra do Python para o Buffer do SO
+            os.fsync(f.fileno())  # 2. Obriga o SO a escrever no DISCO FÍSICO agora
+            # -----------------------------------------
+
+        # 2. Substituição Atômica (O Pulo do Gato)
+        # O Windows/Linux garante que essa troca é instantânea.
+        # Se a luz cair antes dessa linha, o CONFIG_FILE original está intacto.
+        # Se cair depois, o novo já está lá.
+        os.replace(temp_file, CONFIG_FILE)
+
+        # 3. Roda o sistema de backup (agora com o arquivo novo e seguro)
+        run_backup_system()
+        
     except Exception as e:
-        print(f"Erro ao salvar config: {e}")
+        print(f"Erro CRÍTICO ao salvar config: {e}")
+        # Se der erro, tenta limpar o arquivo temporário sujo
+        if os.path.exists(temp_file):
+            try: os.remove(temp_file)
+            except: pass
 
 def log_event(event_type, details):
-    """Salva um evento no log JSON."""
+    """Salva um evento no log JSON de forma ATÔMICA (Anti-Corrupção)."""
+    # Define o nome do arquivo temporário
+    temp_file = f"{LOG_FILE}.tmp"
+    
     try:
+        # 1. Lê o arquivo original (Se existir)
         logs = []
         if os.path.exists(LOG_FILE):
             with open(LOG_FILE, 'r', encoding='utf-8') as f:
@@ -171,6 +289,7 @@ def log_event(event_type, details):
                 except json.JSONDecodeError:
                     logs = []
         
+        # 2. Adiciona o novo evento na memória
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "date": date.today().isoformat(),
@@ -179,8 +298,28 @@ def log_event(event_type, details):
         }
         logs.append(log_entry)
         
-        with open(LOG_FILE, 'w', encoding='utf-8') as f:
+        # 3. Escreve tudo no arquivo TEMPORÁRIO
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
+            
+            # --- O SEGURANÇA DA BALADA ---
+            f.flush()             # Empurra pro buffer
+            os.fsync(f.fileno())  # Obriga o HD a gravar fisicamente
+            # -----------------------------
+
+        # 4. Substituição Instantânea
+        # O arquivo velho é trocado pelo novo num piscar de olhos
+        os.replace(temp_file, LOG_FILE)
+        
+        # 5. Backup (Agora que o arquivo original está seguro e atualizado)
+        run_backup_system()
+        
+    except Exception as e:
+        print(f"Erro ao logar evento: {e}")
+        # Limpa a sujeira se der erro
+        if os.path.exists(temp_file):
+            try: os.remove(temp_file)
+            except: pass
             
     except Exception as e:
         print(f"Erro ao logar evento: {e}")
@@ -277,6 +416,7 @@ class IdentityRejectionSystem:
     def __init__(self, popup_callback_func):
         self.popup_callback = popup_callback_func
         self.config = load_config_data()
+        threading.Thread(target=run_backup_system, daemon=True).start()
         self.tasks = self.config.get('tasks', {})
         self.running = False
         self.rejection_thread = None
@@ -405,7 +545,7 @@ class IdentityRejectionSystem:
         
         log_event("rejection_played", rejection)
         
-        self.set_volume(80)
+        self.set_volume(100)
         
         for _ in range(3):
             if not self.running: break
@@ -523,6 +663,8 @@ class App:
         self.setup_style()
         self.create_main_widgets()
         self.setup_tray_icon()
+
+        threading.Thread(target=run_backup_system, daemon=True).start()
         
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.update_task_list()

@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-MODO ESTUDO/TRABALHO (v1)
-- Janela transparente e minimalista
-- Controla os popups de verificação
+MODO ESTUDO/TRABALHO (v2 - O Contrato)
+- Interface de Configuração Inicial (Input + Tempo)
+- Overlay Transparente com Fiscalização Aleatória
+- Loop de Renovação Obrigatória
 """
 
 import os
@@ -20,17 +21,25 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-# --- Configurações Básicas e Helpers (Copiados do script principal) ---
+# --- Configurações Básicas e Helpers ---
 
 IS_WINDOWS = platform.system() == "Windows"
 APP_NAME = "IdentidadeRejeitada"
 APP_DIR_NAME = "IdentidadeRejeitadaApp"
 
 def get_app_data_dir():
-    if IS_WINDOWS:
-        app_data_path = os.path.join(os.getenv('APPDATA'), APP_DIR_NAME)
-    else:
-        app_data_path = os.path.join(Path.home(), '.config', APP_DIR_NAME)
+    """Define o diretório de dados relativo ao local do script (modo portátil)."""
+    try:
+        # Pega a pasta onde este arquivo .py está localizado
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        # Fallback caso __file__ não esteja definido (ex: alguns compiladores)
+        base_dir = os.getcwd()
+    
+    # Define a pasta 'config' dentro do diretório do script
+    app_data_path = os.path.join(base_dir, "config")
+    
+    # Cria a pasta se não existir
     Path(app_data_path).mkdir(parents=True, exist_ok=True)
     return app_data_path
 
@@ -44,17 +53,15 @@ def load_config_data():
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            pass # Retorna default abaixo
-    
-    # Fallback se o arquivo não existir ou estiver corrompido
-    return {'study_mode': False, 'tts_speed': 2} 
+            pass
+    return {'study_mode': False, 'tts_speed': 3} 
 
 def save_config_data(data):
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        print(f"Erro ao salvar config (study_mode): {e}")
+        print(f"Erro ao salvar config: {e}")
 
 def log_event(event_type, details):
     try:
@@ -75,156 +82,306 @@ def log_event(event_type, details):
         with open(LOG_FILE, 'w', encoding='utf-8') as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"Erro ao logar evento (study_mode): {e}")
+        print(f"Erro ao logar evento: {e}")
 
-def center_window(win, width, height):
-    screen_width = win.winfo_screenwidth()
-    screen_height = win.winfo_screenheight()
-    x = (screen_width // 2) - (width // 2)
-    y = (screen_height // 2) - (height // 2)
-    win.geometry(f'{width}x{height}+{x}+{y}')
+def return_to_main_app():
+    """Desativa o modo estudo no JSON e reabre o App principal."""
+    try:
+        config = load_config_data()
+        config['study_mode'] = False
+        save_config_data(config)
+        log_event("study_mode_off", "Usuário cancelou ou falhou na verificação.")
 
-# --- Classe Principal do Modo Estudo ---
-
-class StudyModeApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.config(bg="#212121")
+        # Tenta rodar o script principal
+        main_script = "identidade_rejeitada.py"
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(base_dir, main_script)
         
-        window_width = 600
-        window_height = 150
+        if not os.path.exists(script_path):
+             # Tenta no diretório atual se não achou no dir do script
+             script_path = main_script
         
+        if IS_WINDOWS:
+            subprocess.Popen(["pythonw", script_path])
+        else:
+            subprocess.Popen(["python3", script_path])
+            
+    except Exception as e:
+        print(f"Erro ao voltar para app principal: {e}")
+    
+    sys.exit()
+
+# --- CLASSE DO SETUP (A Negociação) ---
+
+class SetupWindow:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Contrato de Silêncio")
+        self.center_window(400, 350)
+        self.root.config(bg="#1A1A1A")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_cancel)
+        self.root.attributes("-topmost", True)
+        
+        self.setup_ui()
+        
+    def center_window(self, width, height):
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+
+    def setup_ui(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("TLabel", background="#1A1A1A", foreground="#FFFFFF", font=("Segoe UI", 10))
+        style.configure("TButton", background="#333333", foreground="#FFFFFF", font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.map("TButton", background=[('active', '#555555')])
         
-        # Posição: Canto inferior esquerdo
+        frame = ttk.Frame(self.root, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        # Hack para mudar cor do frame no ttk clam
+        tk.Frame(frame, bg="#1A1A1A").place(relwidth=1, relheight=1)
+
+        # Logar evento de Setup
+        log_event("setup", "Usuário iniciou o Setup.")
+
+        # 1. Título
+        lbl_title = tk.Label(frame, text="CONTRATO DE SILÊNCIO", font=("Impact", 18), bg="#1A1A1A", fg="#FF4444")
+        lbl_title.pack(pady=(0, 20))
+
+        # 2. Tempo
+        ttk.Label(frame, text="Defina a sessão de trabalho/estudo?", background="#1A1A1A", foreground="#E0E0E0").pack(anchor=tk.W)
+        self.combo_time = ttk.Combobox(frame, values=["30 Minutos", "60 Minutos"], state="readonly", font=("Segoe UI", 11))
+        self.combo_time.current(0) # Default 30 min
+        self.combo_time.pack(fill=tk.X, pady=(5, 15))
+
+        # 3. Input Tarefa
+        ttk.Label(frame, text="O que EXATAMENTE você vai fazer?", background="#1A1A1A", foreground="#E0E0E0").pack(anchor=tk.W)
+        self.entry_task = tk.Entry(frame, font=("Segoe UI", 11), bg="#333333", fg="white", insertbackground="white")
+        self.entry_task.pack(fill=tk.X, pady=(5, 20), ipady=3)
+        self.entry_task.focus()
+        log_event("entry_task", f"Usuário definiu a tarefa: {self.entry_task.get()}")
+        
+        # 4. Botões
+        btn_start = tk.Button(frame, text="ASSINAR E INICIAR", font=("Segoe UI", 11, "bold"), 
+                              bg="#007ACC", fg="white", activebackground="#005A9E", activeforeground="white",
+                              command=self.on_start, relief=tk.FLAT, cursor="hand2")        
+        btn_start.pack(fill=tk.X, pady=5, ipady=5)
+
+        btn_cancel = tk.Button(frame, text="Cancelar", font=("Segoe UI", 10), 
+                               bg="#333333", fg="#AAAAAA", activebackground="#444444", activeforeground="white",
+                               command=self.on_cancel, relief=tk.FLAT, cursor="hand2")
+        btn_cancel.pack(fill=tk.X, pady=5)
+
+    def on_start(self):
+        task = self.entry_task.get().strip()
+        time_str = self.combo_time.get()
+        minutes = 30 if "30" in time_str else 60
+
+        num_checks = 4 if minutes == 60 else 3
+        message = f"Nessa sessão você será perguntado {num_checks}x de forma aleatória se ainda está fazendo o que escreveu no contrato."
+        messagebox.showinfo("Aviso Importante", message, parent=self.root)
+        
+        if not task:
+            messagebox.showwarning("Sem Foco", "Escreva o que vai fazer para ativar o contrato.\nSem contrato, sem silêncio.", parent=self.root)
+            return
+        
+        # Fecha esta janela e inicia o overlay
+        self.root.destroy()
+        start_overlay(minutes, task)
+
+    def on_cancel(self):
+        self.root.destroy()
+        return_to_main_app()
+
+    def run(self):
+        self.root.mainloop()
+
+# --- CLASSE DO OVERLAY (A Execução) ---
+
+class OverlayWindow:
+    def __init__(self, minutes, task_name):
+        self.root = tk.Tk()
+        self.minutes = minutes
+        self.task_name = task_name
+        self.running = True
+        
+        # Configuração da Janela Transparente
+        self.root.config(bg="#212121")
+        window_width = 600
+        window_height = 150
+        screen_height = self.root.winfo_screenheight()
+        
         x = 25
-        y = screen_height - window_height - 25 # 55px de folga para a barra de tarefas
+        y = screen_height - window_height - 55
         
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.root.attributes("-topmost", True)
         self.root.overrideredirect(True)
-        self.root.attributes('-transparentcolor', '#212121')
-        self.root.attributes('-alpha', 0.6) 
         
-        self.accountability_running = True
+        if IS_WINDOWS:
+            self.root.attributes('-transparentcolor', '#212121')
+            self.root.attributes('-alpha', 0.6)
+        
+        # Configura o estilo do checkbox escuro
+        self.setup_styles()
         self.create_widgets()
         
-        # Inicia a verificação
-        threading.Thread(target=self.run_accountability_check, daemon=True).start()
+        # Loga o início
+        log_event("study_mode_start", f"{minutes} min. Foco: {task_name}")
         
-        # Bind para arrastar a janela
+        # Inicia a Thread de Lógica (Timer + Popups)
+        threading.Thread(target=self.run_logic, daemon=True).start()
+        
+        # Bind para mover
         self.root.bind("<ButtonPress-1>", self.start_move)
         self.root.bind("<ButtonRelease-1>", self.stop_move)
         self.root.bind("<B1-Motion>", self.do_move)
 
-    def create_widgets(self):
-        style = ttk.Style()        
-        TRANSPARENT_BG = '#212121' 
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam') # Clam permite mais customização de cor
         
-        # --- Configuração dos Estilos ---
-        style.configure('TFrame', background=TRANSPARENT_BG)        
-        style.configure('TLabel', background=TRANSPARENT_BG)        
-        style.configure('TCheckbutton', 
-                        background=TRANSPARENT_BG, 
-                        foreground='#E0E0E0')
-                        
-        style.map('TCheckbutton',
-                  background=[('active', TRANSPARENT_BG)],
-                  indicatorcolor=[('selected', '#ff4444'), ('!selected', '#424242')], 
-                  foreground=[('active', '#FFFFFF')]) 
+        # Estilo para o Checkbox no fundo escuro
+        style.configure("Overlay.TCheckbutton", 
+                        background="#212121", 
+                        foreground="#888888", 
+                        font=("Segoe UI", 9),
+                        indicatorcolor="#444444", # Cor da caixinha vazia
+                        indicatorbackground="#212121")
+        
+        # Mapeamento para quando passar o mouse ou clicar
+        style.map("Overlay.TCheckbutton",
+                  background=[('active', '#212121')],
+                  foreground=[('active', '#FFFFFF')], # Texto fica branco no hover
+                  indicatorcolor=[('selected', '#FF0000'), ('active', '#666666')])
 
-        # --- Criação dos Widgets ---
-        main_frame = ttk.Frame(self.root, style="TFrame", padding=5)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+    def create_widgets(self):
+        main_frame = tk.Frame(self.root, bg="#212121")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.completed_var = tk.StringVar(value="0")
-        self.completed_checkbox = ttk.Checkbutton(main_frame, text="Voltar ao Gerenciador",
-                                                  variable=self.completed_var, 
-                                                  command=self.on_checkbox_toggle,
-                                                  style='TCheckbutton')
-        self.completed_checkbox.pack(pady=(5, 5)) # Adicionado pady
+        # Label Vermelho
+        lbl_mode = tk.Label(main_frame, text="CONTRATO ATIVO", 
+                            font=("Impact", 28), bg="#212121", fg="#FF0000")
+        lbl_mode.pack()
+        
+        # Label da Tarefa
+        self.lbl_task = tk.Label(main_frame, text=f"Atividade: {self.task_name}", 
+                                 font=("Segoe UI", 12, "bold"), bg="#212121", fg="#FFFFFF")
+        self.lbl_task.pack(pady=(0, 10))
 
-        label = ttk.Label(main_frame, text="MODO ESTUDO/TRABALHO", 
-                          font=("Segoe UI", 30, "bold"),
-                          foreground="#FF0000", 
-                          style="TLabel")
-        label.pack(pady=(5, 5))
+        # Checkbox de Desistir (Substituindo o Botão)
+        self.giveup_var = tk.BooleanVar(value=False)
+        self.chk_giveup = ttk.Checkbutton(main_frame, 
+                                          text="Encerrar / Voltar ao App", 
+                                          variable=self.giveup_var,
+                                          command=self.on_checkbox_click,
+                                          style="Overlay.TCheckbutton",
+                                          cursor="hand2")
+        self.chk_giveup.pack()
 
-    def on_checkbox_toggle(self):
-        """Volta para o gerenciador principal."""
-        if self.completed_var.get() == "1":
-            self.accountability_running = False
+    def on_checkbox_click(self):
+        """Chamado quando o checkbox é marcado."""
+        if self.giveup_var.get():
+            self.on_give_up()
+
+    def run_logic(self):
+        total_seconds = self.minutes * 60
+        num_popups = 3 if self.minutes == 30 else 4
+        
+        # Gera momentos aleatórios para os popups
+        # Divide o tempo em 'slots' para garantir distribuição
+        slot_size = total_seconds // num_popups
+        popup_times = []
+        for i in range(num_popups):
+            # Escolhe um segundo aleatório dentro do slot
+            # Slot 1: 0 a X, Slot 2: X a 2X...
+            min_sec = i * slot_size
+            max_sec = (i + 1) * slot_size - 60 # -60s de margem
+            if max_sec <= min_sec: max_sec = min_sec + 10
             
-            # 1. Atualiza o config
-            config = load_config_data()
-            config['study_mode'] = False
-            save_config_data(config)
-            log_event("study_mode_off", "Modo Estudo/Trabalho desativado.")
+            trigger_at = random.randint(min_sec + 60, max_sec) # +60s para não ser imediato
+            popup_times.append(trigger_at)
+        
+        start_time = time.time()
+        
+        while self.running:
+            elapsed = time.time() - start_time
             
-            # 2. Encontra e executa o script principal
-            try:
-                main_script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "identidade_rejeitada.py")
-                if not os.path.exists(main_script_path):
-                    main_script_path = "identidade_rejeitada.py" # Tenta no CWD
-                
-                subprocess.Popen(["pythonw", main_script_path])
-            except Exception as e:
-                print(f"Erro ao reabrir gerenciador: {e}")
-                
-            # 3. Fecha esta janela
-            self.root.after(100, self.root.destroy)
+            # Se acabou o tempo
+            if elapsed >= total_seconds:
+                self.running = False
+                self.root.after(0, self.time_expired)
+                break
+            
+            # Checa se é hora de um popup
+            # Margem de erro de 1s para o loop pegar
+            for pt in popup_times:
+                if abs(elapsed - pt) < 1.5:
+                    self.root.after(0, self.trigger_popup)
+                    popup_times.remove(pt) # Remove para não triggar de novo
+                    break
+            
+            time.sleep(1)
 
-    def run_accountability_check(self):
-        """Thread de verificação que roda DENTRO do modo estudo."""
-        while self.accountability_running:
-            interval = random.randint(15 * 60, 45 * 60)
-            
-            slept_time = 0
-            while slept_time < interval and self.accountability_running:
-                time.sleep(1)
-                slept_time += 1
-            
-            if self.accountability_running:
-                # Precisa agendar a messagebox na thread principal
-                self.root.after(0, self.ask_accountability)
-
-    def ask_accountability(self):
-        """Mostra o popup de verificação."""
-        if not self.accountability_running:
-            return
-            
-        # Traz a janela (invisível) para o topo para ser "dona" da messagebox
+    def trigger_popup(self):
+        """Dispara o popup de fiscalização."""
+        if not self.running: return
+        
         self.root.attributes("-topmost", True)
-        answer = messagebox.askyesno("Verificação de Foco",
-                                       "Você ainda está fazendo o que disse que faria?",
-                                       parent=self.root)
-        if not answer:
-            log_event("accountability_check_failed", "Usuário respondeu 'Não'.")
-            # Marca o checkbox programaticamente para sair
-            self.completed_var.set("1")
-            self.on_checkbox_toggle()
-        else:
-            log_event("accountability_check_ok", "Usuário respondeu 'Sim'.")
+        # Toca um som de aviso do sistema (beep simples)
+        try: self.root.bell() 
+        except: pass
 
-    # --- Funções para arrastar a janela ---
+        response = messagebox.askyesno("FISCALIZAÇÃO", 
+                                       f"Você ainda está focado em:\n\n'{self.task_name}'?\n\nSeja honesto.",
+                                       parent=self.root)
+        
+        if not response:
+            log_event("check_failed", "Usuário admitiu distração.")
+            messagebox.showinfo("Falha", "Distração detectada.\nO Modo Estudo será cancelado.")
+            self.on_give_up()
+        else:
+            log_event("check_passed", "Usuário confirmou foco.")
+
+    def time_expired(self):
+        """O tempo acabou. Fecha overlay e reabre setup."""
+        messagebox.showinfo("TEMPO ESGOTADO", "O seu tempo de silêncio acabou.\nRenove o contrato ou volte ao gerenciador.")
+        log_event("study_mode_expired", "Usuário atingiu o tempo definido.")
+        self.root.destroy()
+        # Reabre o Setup (Ciclo)
+        setup = SetupWindow()
+        setup.run()
+
+    def on_give_up(self):
+        self.running = False
+        self.root.destroy()
+        return_to_main_app()
+
+    # Movimentação
     def start_move(self, event):
         self.root.x = event.x
         self.root.y = event.y
-
     def stop_move(self, event):
         self.root.x = None
         self.root.y = None
-
     def do_move(self, event):
-        deltax = event.x - self.root.x
-        deltay = event.y - self.root.y
-        x = self.root.winfo_x() + deltax
-        y = self.root.winfo_y() + deltay
-        self.root.geometry(f"+{x}+{y}")
+        try:
+            deltax = event.x - self.root.x
+            deltay = event.y - self.root.y
+            x = self.root.winfo_x() + deltax
+            y = self.root.winfo_y() + deltay
+            self.root.geometry(f"+{x}+{y}")
+        except: pass
 
-# --- Ponto de Entrada ---
+def start_overlay(minutes, task):
+    app = OverlayWindow(minutes, task)
+    app.root.mainloop()
+
+# --- MAIN ---
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = StudyModeApp(root)
-    root.mainloop()
+    # Ao iniciar o script, abre a janela de negociação primeiro
+    setup = SetupWindow()
+    setup.run()

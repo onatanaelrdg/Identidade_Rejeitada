@@ -1,5 +1,7 @@
 @echo off
-cd /d "%~dp0"
+TITLE Identidade Rejeitada
+COLOR 0C
 
-REM Inicia o script em modo DAEMON, sem janela de console
-start pythonw identidade_rejeitada.py --daemon
+REM Inicia o script principal
+cd /d "%~dp0"
+start "" pythonw identidade_rejeitada.py --daemon
