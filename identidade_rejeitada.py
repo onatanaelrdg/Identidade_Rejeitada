@@ -545,11 +545,10 @@ class IdentityRejectionSystem:
         
         log_event("rejection_played", rejection)
         
-        self.set_volume(100)
-        
         for _ in range(3):
             if not self.running: break
             
+            self.set_volume(100)
             self.popup_callback(rejection) 
             self.speak_text(rejection, tts_speed)
             time.sleep(0.5) 
