@@ -27,26 +27,15 @@ IS_WINDOWS = platform.system() == "Windows"
 APP_NAME = "IdentidadeRejeitada"
 APP_DIR_NAME = "IdentidadeRejeitadaApp"
 
-def get_app_data_dir():
-    """Define o diretório de dados relativo ao local do script (modo portátil)."""
+def get_base_dir():
     try:
-        # Pega a pasta onde este arquivo .py está localizado
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(os.path.abspath(__file__))
     except NameError:
-        # Fallback caso __file__ não esteja definido (ex: alguns compiladores)
-        base_dir = os.getcwd()
-    
-    # Define a pasta 'config' dentro do diretório do script
-    app_data_path = os.path.join(base_dir, "config")
-    
-    # Cria a pasta se não existir
-    Path(app_data_path).mkdir(parents=True, exist_ok=True)
-    return app_data_path
+        return os.getcwd()
 
-APP_DATA_DIR = get_app_data_dir()
+APP_DATA_DIR = os.path.join(get_base_dir(), "config")
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
 LOG_FILE = os.path.join(APP_DATA_DIR, "logging.json")
-
 def load_config_data():
     if os.path.exists(CONFIG_FILE):
         try:
@@ -85,29 +74,30 @@ def log_event(event_type, details):
         print(f"Erro ao logar evento: {e}")
 
 def return_to_main_app():
-    """Desativa o modo estudo no JSON e reabre o App principal."""
     try:
         config = load_config_data()
         config['study_mode'] = False
         save_config_data(config)
-        log_event("study_mode_off", "Usuário cancelou ou falhou na verificação.")
+        log_event("study_mode_off", "Retornando ao app principal.")
 
-        # Tenta rodar o script principal
-        main_script = "identidade_rejeitada.py"
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        script_path = os.path.join(base_dir, main_script)
+        base_dir = get_base_dir()
+        main_script = os.path.join(base_dir, "identidade_rejeitada.py")
         
-        if not os.path.exists(script_path):
-             # Tenta no diretório atual se não achou no dir do script
-             script_path = main_script
+        if not os.path.exists(main_script):
+             main_script = "identidade_rejeitada.py"
+        
+        interpreter = sys.executable
         
         if IS_WINDOWS:
-            subprocess.Popen(["pythonw", script_path])
+            # pythonw.exe para não abrir terminal preto
+            if "python.exe" in interpreter:
+                interpreter = interpreter.replace("python.exe", "pythonw.exe")
+            subprocess.Popen([interpreter, main_script], cwd=base_dir)
         else:
-            subprocess.Popen(["python3", script_path])
+            subprocess.Popen([interpreter, main_script], cwd=base_dir)
             
     except Exception as e:
-        print(f"Erro ao voltar para app principal: {e}")
+        print(f"Erro fatal ao voltar: {e}")
     
     sys.exit()
 
