@@ -334,18 +334,18 @@ class App:
         if hasattr(self, 'tray'): self.tray.stop()
         self.root.quit(); sys.exit()
 
+    # --- SUBSTITUA A FUNÇÃO open_task_editor POR ESTA ---
     def open_task_editor(self, parent, task_id=None, callback=None):
-        """Janela unificada para Criar e Editar tarefas."""
+        """Janela unificada para Criar e Editar tarefas com Trava de 7 dias."""
         is_edit = task_id is not None
         title = "Editar Tarefa" if is_edit else "Nova Tarefa"
         
         win = tk.Toplevel(parent)
         win.title(title)
-        center_window(win, 400, 350)
+        center_window(win, 450, 500) # Janela um pouco maior
         win.transient(parent)
         win.grab_set()
         
-        # Carrega dados se for edição
         config = load_config_data()
         task_data = config['tasks'].get(task_id, {}) if is_edit else {}
         
@@ -359,66 +359,114 @@ class App:
         if is_edit: name_entry.insert(0, task_data.get('name', ''))
         else: name_entry.focus()
 
-        # 2. Agenda (Radio buttons)
-        ttk.Label(frame, text="Frequência:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
+        # 2. Tempo Mínimo Diário (NOVO)
+        ttk.Label(frame, text="Tempo Mínimo Diário:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(5, 0))
         
+        time_frame = ttk.Frame(frame)
+        time_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        time_val = tk.StringVar(value=str(task_data.get('min_time_val', '')))
+        time_unit = tk.StringVar(value=task_data.get('min_time_unit', 'minutos'))
+        
+        # Entry para números apenas
+        vcmd = (win.register(lambda P: P.isdigit() or P == ""), '%P')
+        time_entry = ttk.Entry(time_frame, textvariable=time_val, validate="key", validatecommand=vcmd, width=10)
+        time_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Radio buttons para unidade
+        ttk.Radiobutton(time_frame, text="Minutos", variable=time_unit, value="minutos").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(time_frame, text="Horas", variable=time_unit, value="horas").pack(side=tk.LEFT, padx=5)
+
+        # Lógica de Trava de 7 Dias
+        # Se for edição, verifica se a trava está ativa
+        created_on = task_data.get('created_on', date.today().isoformat())
+        days_since_creation = (date.today() - date.fromisoformat(created_on)).days
+        is_locked = is_edit and days_since_creation < 7
+        
+        lock_label = None
+        if is_locked:
+            time_entry.configure(state='disabled')
+            # Hack visual para desabilitar radio buttons
+            for child in time_frame.winfo_children():
+                try: child.configure(state='disabled')
+                except: pass
+            
+            remaining = 7 - days_since_creation
+            lock_msg = f"🔒 Tempo travado por mais {remaining} dias"
+            lock_label = ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8))
+            lock_label.pack(anchor=tk.W, pady=(0, 10))
+
+        # 3. Agenda
+        ttk.Label(frame, text="Frequência:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         sched_var = tk.StringVar(value=task_data.get('schedule_type', 'daily'))
         
-        # Frame para dias
         days_frame = ttk.Frame(frame, padding=(10, 5))
         dias_vars = []
         dias_nomes = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
         
-        # Lógica visual dos dias
         def toggle_days(*args):
             state = "normal" if sched_var.get() == "custom" else "disabled"
             for w in days_frame.winfo_children(): w.configure(state=state)
 
-        rb1 = ttk.Radiobutton(frame, text="Todos os dias", variable=sched_var, value="daily", command=toggle_days)
-        rb1.pack(anchor=tk.W)
-        rb2 = ttk.Radiobutton(frame, text="Personalizado:", variable=sched_var, value="custom", command=toggle_days)
-        rb2.pack(anchor=tk.W)
+        ttk.Radiobutton(frame, text="Todos os dias", variable=sched_var, value="daily", command=toggle_days).pack(anchor=tk.W)
+        ttk.Radiobutton(frame, text="Personalizado:", variable=sched_var, value="custom", command=toggle_days).pack(anchor=tk.W)
 
         days_frame.pack(fill=tk.X)
-        
-        # Popula os checkboxes de dias
         saved_days = task_data.get('schedule_days', [])
         for i, nome in enumerate(dias_nomes):
-            # Se for edição, checa se o dia estava salvo. Se for novo, check all (visual apenas)
             is_checked = (i in saved_days) if is_edit and task_data.get('schedule_type') == 'custom' else True
             dv = tk.BooleanVar(value=is_checked)
-            chk = ttk.Checkbutton(days_frame, text=nome, variable=dv)
-            chk.pack(side=tk.LEFT, expand=True)
+            ttk.Checkbutton(days_frame, text=nome, variable=dv).pack(side=tk.LEFT, expand=True)
             dias_vars.append(dv)
-        
-        toggle_days() # Atualiza estado inicial
+        toggle_days()
 
-        # 3. Checkbox Arquivar (Só aparece relevante na edição, mas pode existir na criação)
+        # 4. Checkbox Arquivar
         ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
-        
         is_archived = (task_data.get('status') == 'encerrado')
         archive_var = tk.BooleanVar(value=is_archived)
-        
-        chk_archive = ttk.Checkbutton(frame, text="Arquivar (Inativar Tarefa)", variable=archive_var)
-        chk_archive.pack(anchor=tk.W, pady=5)
-        
-        if not is_edit:
-            # Se é novo, deixa desmarcado por padrão e meio escondido se quiser, 
-            # mas vamos deixar visível caso a pessoa crie já querendo guardar.
-            pass
+        ttk.Checkbutton(frame, text="Arquivar (Inativar Tarefa)", variable=archive_var).pack(anchor=tk.W, pady=5)
 
-        # Botão Salvar
-        def save():
+        # --- Lógica de Salvar ---
+        def pre_save_check():
             name = name_entry.get().strip()
-            if not name: return
+            val_str = time_val.get().strip()
+            
+            if not name:
+                messagebox.showerror("Erro", "Nome da tarefa é obrigatório.", parent=win)
+                return
 
-            # Define ID (usa o existente ou cria novo)
+            # Validação do Sonhador vs Realizador
+            # Só roda se:
+            # 1. Tiver valor preenchido
+            # 2. NÃO estiver travado (ou seja, é criação ou edição permitida)
+            if val_str and not is_locked:
+                try:
+                    val = int(val_str)
+                    unit = time_unit.get()
+                    
+                    # Se for Edição e o valor mudou para MAIOR, avisa também? 
+                    # Por simplicidade, vamos aplicar a regra sempre que salvar um tempo novo/alterado.
+                    old_val = task_data.get('min_time_val', 0)
+                    old_unit = task_data.get('min_time_unit', 'minutos')
+                    
+                    # Normaliza para minutos para comparar
+                    current_minutes = val * 60 if unit == 'horas' else val
+                    old_minutes = (int(old_val) * 60 if old_unit == 'horas' else int(old_val)) if old_val else 0
+
+                    # Se aumentou o tempo ou é novo, dispara o alerta
+                    if current_minutes > old_minutes:
+                         if not self.check_dreamer_vs_doer(win, val, unit):
+                             return # Usuário desistiu no popup
+                             
+                except ValueError:
+                    pass # Ignora se não for numero (validação do entry já segura, mas ok)
+
+            save_final()
+
+        def save_final():
+            name = name_entry.get().strip()
             final_id = task_id if is_edit else str(int(time.time()))
-            
-            # Pega dias selecionados
             selected_days = [i for i, v in enumerate(dias_vars) if v.get()]
-            
-            # Status
             status = "encerrado" if archive_var.get() else "em progresso"
 
             new_data = {
@@ -426,14 +474,14 @@ class App:
                 "schedule_type": sched_var.get(),
                 "schedule_days": [0,1,2,3,4,5,6] if sched_var.get() == 'daily' else selected_days,
                 "status": status,
-                # Mantém dados antigos se existirem (prova, created_on)
                 "created_on": task_data.get('created_on', date.today().isoformat()),
                 "completed_on": task_data.get('completed_on', None),
                 "proof": task_data.get('proof', None),
-                "proof_type": task_data.get('proof_type', None)
+                # Novos Campos
+                "min_time_val": time_val.get().strip(),
+                "min_time_unit": time_unit.get()
             }
             
-            # Salva
             cfg = load_config_data()
             cfg['tasks'][final_id] = new_data
             save_config_data(cfg)
@@ -441,4 +489,59 @@ class App:
             if callback: callback()
             win.destroy()
 
-        ttk.Button(frame, text="Salvar Alterações", command=save).pack(fill=tk.X, pady=10)
+        ttk.Button(frame, text="Salvar Alterações", command=pre_save_check).pack(fill=tk.X, pady=10)
+
+    def check_dreamer_vs_doer(self, parent, val, unit):
+        """Janela Modal: Sonhador vs Realizador."""
+        alert_win = tk.Toplevel(parent)
+        alert_win.title("SONHADOR x REALIZADOR")
+        center_window(alert_win, 500, 300)
+        alert_win.transient(parent)
+        alert_win.grab_set()
+        alert_win.configure(bg="#1A1A1A")
+        
+        # Remove a barra de título padrão para forçar foco no conteúdo (opcional, mas fica mais agressivo)
+        # alert_win.overrideredirect(True) 
+        
+        container = tk.Frame(alert_win, bg="#1A1A1A", padx=20, pady=20)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Título
+        tk.Label(container, text="⚠️ SONHADOR x REALIZADOR", font=("Impact", 18), 
+                 fg="#FFCC00", bg="#1A1A1A").pack(pady=(0, 15))
+        
+        msg = (f"Você está definindo uma meta mínima de {val} {unit.upper()}.\n\n"
+               "Tem certeza que consegue manter isso?\n"
+               "Não será possível alterar o tempo mínimo pelos próximos 7 dias.\n"
+               "Se estiver iniciando agora, jogue seguro.")
+               
+        tk.Label(container, text=msg, font=("Segoe UI", 11), fg="white", bg="#1A1A1A", 
+                 justify=tk.CENTER, wraplength=450).pack(pady=(0, 20))
+        
+        result = {"proceed": False}
+        
+        def on_rethink():
+            result["proceed"] = False
+            alert_win.destroy()
+            
+        def on_commit():
+            result["proceed"] = True
+            alert_win.destroy()
+            
+        btn_frame = tk.Frame(container, bg="#1A1A1A")
+        btn_frame.pack(fill=tk.X)
+        
+        # Botão Comprometer (Agora o Principal: Verde e na Esquerda)
+        btn_commit = tk.Button(btn_frame, text="ME COMPROMETO\n(Minha decisão)", font=("Segoe UI", 10, "bold"),
+                               bg="#4CAF50", fg="white", relief=tk.FLAT, padx=10, pady=5,
+                               command=on_commit, cursor="hand2")
+        btn_commit.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+
+        # Botão Re-analisar (Agora Secundário: Azul e na Direita)
+        btn_rethink = tk.Button(btn_frame, text=f"RE-ANALISAR TEMPO\n({val} {unit})", font=("Segoe UI", 10),
+                                bg="#007ACC", fg="white", relief=tk.FLAT, padx=10, pady=5,
+                                command=on_rethink, cursor="hand2")
+        btn_rethink.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=(5, 0))
+        
+        parent.wait_window(alert_win)
+        return result["proceed"]
