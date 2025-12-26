@@ -193,38 +193,115 @@ class App:
         ttk.Button(f, text="Remover", command=rem).pack(fill=tk.X)
 
     def open_task_manager(self):
-        win = tk.Toplevel(self.root); win.title("Tarefas"); center_window(win, 500, 400)
-        win.transient(self.root); win.grab_set()
-        tree = ttk.Treeview(win, columns=("Nome", "Agenda"), show="headings"); tree.pack(fill=tk.BOTH, expand=True)
-        tree.heading("Nome", text="Nome"); tree.heading("Agenda", text="Agenda")
+        manager_win = tk.Toplevel(self.root)
+        manager_win.title("Tarefas de Rotina (Ativas)")
+        center_window(manager_win, 600, 450)
+        manager_win.transient(self.root)
+        manager_win.grab_set()
         
-        def pop():
-            for i in tree.get_children(): tree.delete(i)
+        # Estilo e Frame
+        frame = ttk.Frame(manager_win, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # Treeview
+        columns = ("Nome", "Agenda")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
+        tree.heading("Nome", text="Nome da Tarefa")
+        tree.heading("Agenda", text="Frequência")
+        tree.column("Nome", width=350)
+        tree.column("Agenda", width=150)
+        
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def populate():
+            for item in tree.get_children(): tree.delete(item)
+            cfg = load_config_data()
+            dias_sem = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+            
+            for tid, t in cfg.get('tasks', {}).items():
+                # Só mostra as ativas (em progresso)
+                if t.get('status', 'em progresso') == 'em progresso':
+                    if t.get('schedule_type') == 'daily':
+                        sched = "Todos os dias"
+                    else:
+                        ds = t.get('schedule_days', [])
+                        sched = ", ".join([dias_sem[i] for i in ds]) if ds else "Personalizado"
+                    tree.insert("", tk.END, iid=tid, values=(t['name'], sched))
+
+        populate()
+
+        # Botões
+        btn_frame = ttk.Frame(manager_win, padding=(10, 10))
+        btn_frame.pack(fill=tk.X)
+
+        def edit_selected():
+            sel = tree.selection()
+            if not sel: return
+            task_id = sel[0]
+            # Abre o editor passando o ID da tarefa existente
+            self.open_task_editor(parent=manager_win, task_id=task_id, callback=lambda: [populate(), self.update_task_list()])
+
+        def create_new():
+            # Abre o editor sem ID (modo criação)
+            self.open_task_editor(parent=manager_win, task_id=None, callback=lambda: [populate(), self.update_task_list()])
+
+        def open_archives():
+            # Abre a nova janela de arquivados
+            self.open_archived_manager(manager_win)
+            # Atualiza esta lista quando voltar, caso tenha desarquivado algo
+            populate()
+            self.update_task_list()
+
+        ttk.Button(btn_frame, text="Nova Tarefa", command=create_new).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Editar Selecionada", command=edit_selected).pack(side=tk.LEFT, padx=5)
+        
+        # Botão de Arquivados (Fica na direita, cor diferente se possível, mas padrão aqui)
+        ttk.Button(btn_frame, text="Ver Arquivados 📂", command=open_archives).pack(side=tk.RIGHT, padx=5)
+
+    def open_archived_manager(self, parent):
+        arch_win = tk.Toplevel(parent)
+        arch_win.title("Arquivo Morto (Tarefas Encerradas)")
+        center_window(arch_win, 500, 400)
+        arch_win.transient(parent)
+        arch_win.grab_set()
+
+        frame = ttk.Frame(arch_win, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        lbl = ttk.Label(frame, text="Estas tarefas não aparecem na sua rotina diária.", font=("Segoe UI", 9, "italic"))
+        lbl.pack(pady=(0, 10))
+
+        tree = ttk.Treeview(frame, columns=("Nome",), show="headings", selectmode="browse")
+        tree.heading("Nome", text="Nome da Tarefa Arquivada")
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrol = ttk.Scrollbar(frame, command=tree.yview)
+        tree.configure(yscrollcommand=scrol.set)
+        scrol.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def populate_archived():
+            for item in tree.get_children(): tree.delete(item)
             cfg = load_config_data()
             for tid, t in cfg.get('tasks', {}).items():
-                if t.get('status') == 'em progresso':
-                    sched = "Todos dias" if t.get('schedule_type') == 'daily' else "Personalizado"
-                    tree.insert("", tk.END, iid=tid, values=(t['name'], sched))
-        pop()
-        
-        def add_task():
-            aw = tk.Toplevel(win); aw.title("Nova"); center_window(aw, 300, 200)
-            ne = ttk.Entry(aw); ne.pack(pady=5)
-            def save():
-                n = ne.get()
-                if n:
-                    tid = str(int(time.time()))
-                    new_t = {"name": n, "created_on": date.today().isoformat(), "completed_on": None, "proof": None, "schedule_type": "daily", "schedule_days": [0,1,2,3,4,5,6], "status": "em progresso"}
-                    c = load_config_data(); c['tasks'][tid] = new_t; save_config_data(c); pop(); self.update_task_list(); aw.destroy()
-            ttk.Button(aw, text="Salvar", command=save).pack()
-            
-        def end_task():
-            s = tree.selection()
-            if s:
-                c = load_config_data(); c['tasks'][s[0]]['status'] = 'encerrado'; save_config_data(c); pop(); self.update_task_list()
+                if t.get('status') == 'encerrado':
+                    tree.insert("", tk.END, iid=tid, values=(t['name'],))
 
-        ttk.Button(win, text="Nova Tarefa", command=add_task).pack(side=tk.LEFT, padx=10, pady=10)
-        ttk.Button(win, text="Encerrar Selecionada", command=end_task).pack(side=tk.RIGHT, padx=10, pady=10)
+        populate_archived()
+
+        btn_frame = ttk.Frame(arch_win, padding=10)
+        btn_frame.pack(fill=tk.X)
+
+        def edit_restore():
+            sel = tree.selection()
+            if not sel: return
+            # Abre o mesmo editor, permitindo desmarcar "Arquivado"
+            self.open_task_editor(parent=arch_win, task_id=sel[0], callback=lambda: [populate_archived(), self.update_task_list()])
+
+        ttk.Button(btn_frame, text="Editar / Restaurar", command=edit_restore).pack(fill=tk.X)
 
     def open_settings(self):
         win = tk.Toplevel(self.root); win.title("Config"); center_window(win, 300, 150)
@@ -256,3 +333,112 @@ class App:
     def quit_app(self):
         if hasattr(self, 'tray'): self.tray.stop()
         self.root.quit(); sys.exit()
+
+    def open_task_editor(self, parent, task_id=None, callback=None):
+        """Janela unificada para Criar e Editar tarefas."""
+        is_edit = task_id is not None
+        title = "Editar Tarefa" if is_edit else "Nova Tarefa"
+        
+        win = tk.Toplevel(parent)
+        win.title(title)
+        center_window(win, 400, 350)
+        win.transient(parent)
+        win.grab_set()
+        
+        # Carrega dados se for edição
+        config = load_config_data()
+        task_data = config['tasks'].get(task_id, {}) if is_edit else {}
+        
+        frame = ttk.Frame(win, padding=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Nome
+        ttk.Label(frame, text="Nome da Tarefa:").pack(anchor=tk.W)
+        name_entry = ttk.Entry(frame)
+        name_entry.pack(fill=tk.X, pady=(0, 10))
+        if is_edit: name_entry.insert(0, task_data.get('name', ''))
+        else: name_entry.focus()
+
+        # 2. Agenda (Radio buttons)
+        ttk.Label(frame, text="Frequência:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
+        
+        sched_var = tk.StringVar(value=task_data.get('schedule_type', 'daily'))
+        
+        # Frame para dias
+        days_frame = ttk.Frame(frame, padding=(10, 5))
+        dias_vars = []
+        dias_nomes = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+        
+        # Lógica visual dos dias
+        def toggle_days(*args):
+            state = "normal" if sched_var.get() == "custom" else "disabled"
+            for w in days_frame.winfo_children(): w.configure(state=state)
+
+        rb1 = ttk.Radiobutton(frame, text="Todos os dias", variable=sched_var, value="daily", command=toggle_days)
+        rb1.pack(anchor=tk.W)
+        rb2 = ttk.Radiobutton(frame, text="Personalizado:", variable=sched_var, value="custom", command=toggle_days)
+        rb2.pack(anchor=tk.W)
+
+        days_frame.pack(fill=tk.X)
+        
+        # Popula os checkboxes de dias
+        saved_days = task_data.get('schedule_days', [])
+        for i, nome in enumerate(dias_nomes):
+            # Se for edição, checa se o dia estava salvo. Se for novo, check all (visual apenas)
+            is_checked = (i in saved_days) if is_edit and task_data.get('schedule_type') == 'custom' else True
+            dv = tk.BooleanVar(value=is_checked)
+            chk = ttk.Checkbutton(days_frame, text=nome, variable=dv)
+            chk.pack(side=tk.LEFT, expand=True)
+            dias_vars.append(dv)
+        
+        toggle_days() # Atualiza estado inicial
+
+        # 3. Checkbox Arquivar (Só aparece relevante na edição, mas pode existir na criação)
+        ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
+        
+        is_archived = (task_data.get('status') == 'encerrado')
+        archive_var = tk.BooleanVar(value=is_archived)
+        
+        chk_archive = ttk.Checkbutton(frame, text="Arquivar (Inativar Tarefa)", variable=archive_var)
+        chk_archive.pack(anchor=tk.W, pady=5)
+        
+        if not is_edit:
+            # Se é novo, deixa desmarcado por padrão e meio escondido se quiser, 
+            # mas vamos deixar visível caso a pessoa crie já querendo guardar.
+            pass
+
+        # Botão Salvar
+        def save():
+            name = name_entry.get().strip()
+            if not name: return
+
+            # Define ID (usa o existente ou cria novo)
+            final_id = task_id if is_edit else str(int(time.time()))
+            
+            # Pega dias selecionados
+            selected_days = [i for i, v in enumerate(dias_vars) if v.get()]
+            
+            # Status
+            status = "encerrado" if archive_var.get() else "em progresso"
+
+            new_data = {
+                "name": name,
+                "schedule_type": sched_var.get(),
+                "schedule_days": [0,1,2,3,4,5,6] if sched_var.get() == 'daily' else selected_days,
+                "status": status,
+                # Mantém dados antigos se existirem (prova, created_on)
+                "created_on": task_data.get('created_on', date.today().isoformat()),
+                "completed_on": task_data.get('completed_on', None),
+                "proof": task_data.get('proof', None),
+                "proof_type": task_data.get('proof_type', None)
+            }
+            
+            # Salva
+            cfg = load_config_data()
+            cfg['tasks'][final_id] = new_data
+            save_config_data(cfg)
+            
+            if callback: callback()
+            win.destroy()
+
+        ttk.Button(frame, text="Salvar Alterações", command=save).pack(fill=tk.X, pady=10)
