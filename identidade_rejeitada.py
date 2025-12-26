@@ -96,7 +96,6 @@ APP_DATA_DIR = get_app_data_dir()
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
 LOG_FILE = os.path.join(APP_DATA_DIR, "logging.json")
 PROOFS_DIR = os.path.join(APP_DATA_DIR, "provas")
-TEMP_TASKS_FILE = os.path.join(APP_DATA_DIR, "temp_tasks.txt")
 Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
 
 def run_backup_system():
@@ -360,18 +359,6 @@ def set_system_volume(level_percent):
     else:
         print("Controle de volume não disponível neste SO.")
 
-def load_temp_tasks():
-    """Carrega as tarefas temporárias do .txt."""
-    if not os.path.exists(TEMP_TASKS_FILE):
-        return []
-    try:
-        with open(TEMP_TASKS_FILE, 'r', encoding='utf-8') as f:
-            tasks = [line.strip() for line in f if line.strip()]
-        return tasks
-    except Exception as e:
-        print(f"Erro ao carregar tarefas temporárias: {e}")
-        return []
-
 def center_window(win, width, height):
     """Centraliza uma janela tk.Tk ou tk.Toplevel no monitor."""
     screen_width = win.winfo_screenwidth()
@@ -381,7 +368,7 @@ def center_window(win, width, height):
     win.geometry(f'{width}x{height}+{x}+{y}')
 
 def get_tasks_for_today():
-    """Filtra as tarefas de rotina e temp que são para hoje."""
+    """Filtra as tarefas de rotina que são para hoje."""
     config = load_config_data()
     routine_tasks = config.get('tasks', {})
     
@@ -403,10 +390,7 @@ def get_tasks_for_today():
             if today_weekday in task.get('schedule_days', []):
                 tasks_for_today[task_id] = task
                 
-    temp_tasks = load_temp_tasks()
-    
-    return tasks_for_today, temp_tasks
-
+    return tasks_for_today
 # ---
 # MECÂNICA 1: O REPRODUTOR (DAEMON)
 # ---
@@ -498,26 +482,20 @@ class IdentityRejectionSystem:
 
     def all_tasks_completed(self):
         # 1. Carrega as tarefas filtradas para o dia de HOJE
-        tasks_for_today, temp_tasks = get_tasks_for_today()
+        tasks_for_today = get_tasks_for_today()
 
-        # 2. Checa tarefas de rotina de hoje
+        # 2. Checa tarefas de rotina de hoje        
         all_routine_completed = True
-        if not tasks_for_today: # Se não há tarefas de rotina para hoje, não conta como "feito"
-            all_routine_completed = False 
-        
         for task in tasks_for_today.values():
             if not task.get('completed_on') == date.today().isoformat():
                 all_routine_completed = False
                 break
         
-        # 3. Checa tarefas temporárias
-        all_temp_completed = not bool(temp_tasks) # True se a lista estiver vazia
-
-        if all_routine_completed and all_temp_completed:
+        if all_routine_completed:
             today_str = date.today().isoformat()
             if self.config.get('last_completion_date') != today_str:
                 self.config['last_completion_date'] = today_str
-                log_event("all_tasks_completed", "Todas as atividades (Rotina e Temp) foram concluídas.")
+                log_event("all_tasks_completed", "Todas as atividades de Rotina foram concluídas.")
                 self.save_config()
             return True
             
@@ -656,7 +634,6 @@ class App:
         # Carrega os dados de config
         self.config_data = load_config_data()
         self.tasks = self.config_data.get('tasks', {})
-        self.temp_tasks = load_temp_tasks()
         self.temp_task_widgets = {}
         
         self.setup_style()
@@ -706,17 +683,11 @@ class App:
                                        variable=self.study_mode_var, command=self.toggle_study_mode)
         study_button.pack(anchor=tk.W, pady=5)
         
-        # --- Frame Principal de Tarefas (agora um container) ---
-        tasks_container_frame = ttk.Frame(self.main_frame)
-        tasks_container_frame.pack(fill=tk.BOTH, expand=True)
+        # --- Frame Único de Tarefas ---
+        routine_frame = ttk.Frame(self.main_frame)
+        routine_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
-        # --- Frame de Tarefas de Rotina (Esquerda) ---
-        routine_frame = ttk.Frame(tasks_container_frame)
-        routine_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-
-        task_header_frame = ttk.Frame(routine_frame)
-        task_header_frame.pack(fill=tk.X, pady=(10, 2))
-        ttk.Label(task_header_frame, text="Tarefas de Rotina:", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W)
+        ttk.Label(routine_frame, text="Tarefas de Rotina:", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, pady=(0, 5))
 
         canvas_frame = ttk.Frame(routine_frame)
         canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -740,38 +711,6 @@ class App:
         
         self.task_widgets = {}
 
-        # --- Frame de Tarefas Temporárias (Direita) ---
-        self.temp_task_frame = ttk.Frame(tasks_container_frame)
-        # self.temp_task_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0)) # Será ativado pelo menu
-
-        temp_header_frame = ttk.Frame(self.temp_task_frame)
-        temp_header_frame.pack(fill=tk.X, pady=(10, 2))
-        ttk.Label(temp_header_frame, text="Tarefas Temporárias:", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W)
-        
-        ttk.Button(temp_header_frame, text="+ Tarefa Temporária", command=self.add_temp_task_input).pack(anchor=tk.W, pady=5)
-
-        temp_canvas_frame = ttk.Frame(self.temp_task_frame)
-        temp_canvas_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.temp_task_canvas = tk.Canvas(temp_canvas_frame, bg="#2E2E2E", highlightthickness=0)
-        temp_scrollbar = ttk.Scrollbar(temp_canvas_frame, orient="vertical", command=self.temp_task_canvas.yview)
-        self.temp_scrollable_frame = ttk.Frame(self.temp_task_canvas)
-
-        self.temp_scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.temp_task_canvas.configure(
-                scrollregion=self.temp_task_canvas.bbox("all")
-            )
-        )
-
-        self.temp_task_canvas.create_window((0, 0), window=self.temp_scrollable_frame, anchor="nw")
-        self.temp_task_canvas.configure(yscrollcommand=temp_scrollbar.set)
-
-        self.temp_task_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        temp_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.temp_task_frame.pack_forget() # Esconde o frame por padrão
-
     def update_task_list(self):
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
@@ -779,13 +718,12 @@ class App:
         self.task_widgets = {}
         today_str = date.today().isoformat()
         
-        # Recarrega tasks de HOJE
-        self.tasks_for_today, _ = get_tasks_for_today()
+        # Recarrega tasks de HOJE (Agora retorna apenas um dicionário)
+        self.tasks_for_today = get_tasks_for_today()
         
         if not self.tasks_for_today:
             ttk.Label(self.scrollable_frame, text="Nenhuma tarefa de rotina para hoje.",
                       font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
-            # Não retorne, para que o usuário ainda possa ver o painel temp
         else:
             for task_id, task in self.tasks_for_today.items():
                 task_frame = ttk.Frame(self.scrollable_frame, padding=5)
@@ -809,10 +747,6 @@ class App:
                     ttk.Label(task_frame, text=proof_text, font=("Segoe UI", 9, "italic"), foreground="#00A000").pack(side=tk.RIGHT)
                 
                 self.task_widgets[task_id] = {'var': var, 'cb': cb}
-
-        # Atualiza a lista de tarefas temporárias também, se estiver visível
-        if self.temp_task_frame.winfo_ismapped():
-            self.update_temp_task_list()
 
     def on_task_check(self, var, task_id):
         if var.get(): 
@@ -838,21 +772,20 @@ class App:
                 log_event("task_completed", f"{task_id}: {task['name']}")
                 self.update_task_list() # Atualiza a lista da home
                 
-                # Verifica se TODAS as tarefas (rotina de HOJE e temp) foram completas
-                tasks_for_today, temp_tasks = get_tasks_for_today()
+                # Verifica se TODAS as tarefas de rotina de HOJE foram completas
+                tasks_for_today = get_tasks_for_today()
 
                 all_routine_done = True
                 if not tasks_for_today:
                      all_routine_done = False 
+                
                 for t in tasks_for_today.values():
                     if not t.get('completed_on') == date.today().isoformat():
                         all_routine_done = False
                         break
                 
-                all_temp_done = not bool(temp_tasks)
-
-                if all_routine_done and all_temp_done:
-                    messagebox.showinfo("Parabéns!", "Todas as atividades de hoje foram concluídas! Os áudios estão desativados por hoje.")
+                if all_routine_done:
+                    messagebox.showinfo("Parabéns!", "Todas as atividades de rotina foram concluídas! Os áudios estão desativados por hoje.")
                     # Atualiza o config para o daemon saber
                     self.config_data['last_completion_date'] = date.today().isoformat()
                     save_config_data(self.config_data)
@@ -911,7 +844,7 @@ class App:
     def open_menu(self):
         menu_win = tk.Toplevel(self.root)
         menu_win.title("Menu")
-        center_window(menu_win, 300, 280) # Aumentei a altura
+        center_window(menu_win, 300, 250) 
         menu_win.transient(self.root)
         menu_win.grab_set()
         
@@ -919,7 +852,6 @@ class App:
         frame.pack(fill=tk.BOTH, expand=True)
         
         ttk.Button(frame, text="Gerenciar Tarefas de Rotina", command=self.open_task_manager).pack(fill=tk.X, pady=5)
-        ttk.Button(frame, text="Adicionar Tarefa Temporária", command=lambda: [self.show_temp_task_frame(), menu_win.destroy()]).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Gerenciar Rejeições", command=self.open_rejection_manager).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Configurações (Velocidade)", command=self.open_settings).pack(fill=tk.X, pady=5)
         ttk.Button(frame, text="Testar Áudio", command=self.test_audio).pack(fill=tk.X, pady=5)
@@ -1218,113 +1150,6 @@ class App:
             self.tray_icon.stop()
         self.root.quit()
         sys.exit()
-
-    def save_temp_tasks(self, tasks_list):
-        """Salva a lista de tarefas temporárias no .txt."""
-        try:
-            with open(TEMP_TASKS_FILE, 'w', encoding='utf-8') as f:
-                for task in tasks_list:
-                    f.write(task + '\n')
-        except Exception as e:
-            print(f"Erro ao salvar tarefas temporárias: {e}")
-
-    def show_temp_task_frame(self):
-        """Expande a janela e mostra o frame de tarefas temporárias."""
-        center_window(self.root, 900, 500)
-        self.temp_task_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
-        self.update_temp_task_list()
-
-    def update_temp_task_list(self):
-        """Atualiza a lista de checkboxes de tarefas temporárias."""
-        for widget in self.temp_scrollable_frame.winfo_children():
-            widget.destroy()
-        
-        self.temp_task_widgets = {}
-        self.temp_tasks = load_temp_tasks()
-
-        if not self.temp_tasks:
-            ttk.Label(self.temp_scrollable_frame, text="Nenhuma tarefa temporária.",
-                        font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
-            return
-
-        for task_name in self.temp_tasks:
-            task_frame = ttk.Frame(self.temp_scrollable_frame, padding=5)
-            task_frame.pack(fill=tk.X, pady=2)
-            
-            var = tk.BooleanVar(value=False)
-            cb = ttk.Checkbutton(task_frame, text=task_name, variable=var,
-                                    command=lambda v=var, name=task_name: self.on_temp_task_check(name, v))
-            cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            self.temp_task_widgets[task_name] = {'var': var, 'cb': cb}
-
-    def add_temp_task_input(self):
-        """Adiciona um campo de entrada para nova tarefa temp."""
-        # Remove labels de "nenhuma tarefa" se existirem
-        for widget in self.temp_scrollable_frame.winfo_children():
-            if isinstance(widget, ttk.Label):
-                widget.destroy()
-                
-        entry_frame = ttk.Frame(self.temp_scrollable_frame, padding=5)
-        entry_frame.pack(fill=tk.X, pady=2)
-        
-        entry = ttk.Entry(entry_frame, font=("Segoe UI", 11))
-        entry.pack(fill=tk.X, expand=True)
-        entry.focus()
-        
-        entry.bind("<Return>", lambda event: self.save_new_temp_task(event, entry_frame))
-        entry.bind("<Escape>", lambda event: entry_frame.destroy())
-
-    def save_new_temp_task(self, event, entry_frame):
-        """Salva a nova tarefa temporária do input."""
-        entry = event.widget
-        task_name = entry.get().strip()
-        
-        if task_name:
-            tasks = load_temp_tasks()
-            if task_name not in tasks:
-                tasks.append(task_name)
-                self.save_temp_tasks(tasks)
-                log_event("temp_task_added", task_name)
-                entry_frame.destroy()
-                self.update_temp_task_list()
-        else:
-            entry_frame.destroy()
-
-    def on_temp_task_check(self, task_name, var):
-        """Chamado ao completar uma tarefa temporária."""
-        if var.get():
-            proof_type, proof_data = self.get_proof(task_name)
-            
-            if proof_data:
-                # Tarefa concluída, removê-la do arquivo
-                tasks = load_temp_tasks()
-                if task_name in tasks:
-                    tasks.remove(task_name)
-                self.save_temp_tasks(tasks)
-                
-                log_event("temp_task_completed", task_name)
-                self.update_temp_task_list() # Atualiza a lista da GUI
-                
-                # Verifica se TUDO foi concluído
-                tasks_for_today, temp_tasks_remaining = get_tasks_for_today()
-                
-                all_routine_done = True
-                if not tasks_for_today:
-                    all_routine_done = False
-                for t in tasks_for_today.values():
-                    if not t.get('completed_on') == date.today().isoformat():
-                        all_routine_done = False
-                        break
-                
-                all_temp_done = not bool(temp_tasks_remaining) # Checa a lista que acabamos de carregar
-
-                if all_routine_done and all_temp_done:
-                    messagebox.showinfo("Parabéns!", "Todas as atividades de hoje foram concluídas! Os áudios estão desativados por hoje.")
-                    self.config_data = load_config_data() # Recarrega
-                    self.config_data['last_completion_date'] = date.today().isoformat()
-                    save_config_data(self.config_data)
-            else:
-                var.set(False) # Prova foi cancelada, desmarca o checkbox
 
     def show_add_task_window(self):
         """Mostra o popup para adicionar uma nova tarefa de rotina."""
