@@ -18,7 +18,8 @@ except ImportError: pystray = None
 from core import (
     APP_NAME, PROOFS_DIR, IS_WINDOWS, IS_MACOS, IS_LINUX,
     load_config_data, save_config_data, log_event, run_backup_system,
-    set_system_volume, center_window, get_tasks_for_today
+    set_system_volume, center_window, get_tasks_for_today,
+    sign_date, verify_and_get_date
 )
 from daemon import show_standalone_popup
 
@@ -414,15 +415,15 @@ class App:
         if hasattr(self, 'tray'): self.tray.stop()
         self.root.quit(); sys.exit()
 
-    # --- SUBSTITUA A FUNÇÃO open_task_editor POR ESTA ---
+    # --- SUBSTITUA A FUNÇÃO open_task_editor POR ESTA (VERSÃO COM HASH ANTI-TRAPAÇA) ---
     def open_task_editor(self, parent, task_id=None, callback=None):
-        """Janela unificada para Criar e Editar tarefas com Trava de 7 dias."""
+        """Janela unificada para Criar e Editar tarefas com Trava de 7 dias BLINDADA."""
         is_edit = task_id is not None
         title = "Editar Tarefa" if is_edit else "Nova Tarefa"
         
         win = tk.Toplevel(parent)
         win.title(title)
-        center_window(win, 450, 500) # Janela um pouco maior
+        center_window(win, 450, 500)
         win.transient(parent)
         win.grab_set()
         
@@ -439,7 +440,7 @@ class App:
         if is_edit: name_entry.insert(0, task_data.get('name', ''))
         else: name_entry.focus()
 
-        # 2. Tempo Mínimo Diário (NOVO)
+        # 2. Tempo Mínimo Diário
         ttk.Label(frame, text="Tempo Mínimo Diário:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(5, 0))
         
         time_frame = ttk.Frame(frame)
@@ -453,27 +454,51 @@ class App:
         time_entry = ttk.Entry(time_frame, textvariable=time_val, validate="key", validatecommand=vcmd, width=10)
         time_entry.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Radio buttons para unidade
+        # Radio buttons
         ttk.Radiobutton(time_frame, text="Minutos", variable=time_unit, value="minutos").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(time_frame, text="Horas", variable=time_unit, value="horas").pack(side=tk.LEFT, padx=5)
 
-        # Lógica de Trava de 7 Dias
-        # Se for edição, verifica se a trava está ativa
-        created_on = task_data.get('created_on', date.today().isoformat())
-        days_since_creation = (date.today() - date.fromisoformat(created_on)).days
-        is_locked = is_edit and days_since_creation < 7
+        # --- LÓGICA DE TRAVA BLINDADA (HASH) ---
+        raw_last_set = task_data.get('min_time_last_set', None)
         
-        lock_label = None
+        # Verifica a integridade da data
+        valid_date_str = verify_and_get_date(raw_last_set)
+        
+        tampered = False
+        if raw_last_set and valid_date_str is False:
+            tampered = True
+            # Se detectou adulteração, considera HOJE como a data (PUNIÇÃO)
+            valid_date_str = date.today().isoformat()
+            messagebox.showwarning("⚠️ ALERTA DE SEGURANÇA", 
+                                   "Identificamos uma tentativa de alteração manual no arquivo de configuração.\n\n"
+                                   "Como penalidade, a trava de 7 dias foi REINICIADA agora.", parent=win)
+        
+        # Se a data for nula (tarefa antiga sem hash), usa hoje
+        if not valid_date_str:
+            valid_date_str = date.today().isoformat()
+
+        is_locked = False
+        remaining = 0
+        
+        if is_edit:
+            last_set_date = date.fromisoformat(valid_date_str)
+            days_since_change = (date.today() - last_set_date).days
+            
+            # Se foi adulterado, bloqueia na hora (já que days_since_change será 0)
+            if days_since_change < 7:
+                is_locked = True
+                remaining = 7 - days_since_change
+
         if is_locked:
             time_entry.configure(state='disabled')
-            # Hack visual para desabilitar radio buttons
             for child in time_frame.winfo_children():
                 try: child.configure(state='disabled')
                 except: pass
             
-            remaining = 7 - days_since_creation
             lock_msg = f"🔒 Tempo travado por mais {remaining} dias"
-            lock_label = ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8))
+            if tampered: lock_msg += " (PENALIDADE)"
+            
+            lock_label = ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8, "bold"))
             lock_label.pack(anchor=tk.W, pady=(0, 10))
 
         # 3. Agenda
@@ -515,32 +540,19 @@ class App:
                 messagebox.showerror("Erro", "Nome da tarefa é obrigatório.", parent=win)
                 return
 
-            # Validação do Sonhador vs Realizador
-            # Só roda se:
-            # 1. Tiver valor preenchido
-            # 2. NÃO estiver travado (ou seja, é criação ou edição permitida)
             if val_str and not is_locked:
                 try:
                     val = int(val_str)
                     unit = time_unit.get()
-                    
-                    # Se for Edição e o valor mudou para MAIOR, avisa também? 
-                    # Por simplicidade, vamos aplicar a regra sempre que salvar um tempo novo/alterado.
                     old_val = task_data.get('min_time_val', 0)
                     old_unit = task_data.get('min_time_unit', 'minutos')
-                    
-                    # Normaliza para minutos para comparar
                     current_minutes = val * 60 if unit == 'horas' else val
                     old_minutes = (int(old_val) * 60 if old_unit == 'horas' else int(old_val)) if old_val else 0
 
-                    # Se aumentou o tempo ou é novo, dispara o alerta
                     if current_minutes > old_minutes:
                          if not self.check_dreamer_vs_doer(win, val, unit):
-                             return # Usuário desistiu no popup
-                             
-                except ValueError:
-                    pass # Ignora se não for numero (validação do entry já segura, mas ok)
-
+                             return 
+                except ValueError: pass
             save_final()
 
         def save_final():
@@ -548,6 +560,20 @@ class App:
             final_id = task_id if is_edit else str(int(time.time()))
             selected_days = [i for i, v in enumerate(dias_vars) if v.get()]
             status = "encerrado" if archive_var.get() else "em progresso"
+
+            current_time_val = time_val.get().strip()
+            current_time_unit = time_unit.get()
+            old_time_val = str(task_data.get('min_time_val', ''))
+            old_time_unit = task_data.get('min_time_unit', 'minutos')
+            
+            # Recupera a data validada que calculamos no início
+            # Se for uma data nova (tarefa nova), usa Hoje Assinado
+            final_signed_date = raw_last_set
+            
+            # Se houve mudança real no tempo (ou é novo), ou se houve adulteração (tampered)
+            if (current_time_val != old_time_val) or (current_time_unit != old_time_unit) or not is_edit or tampered or not raw_last_set:
+                # Gera nova assinatura para HOJE
+                final_signed_date = sign_date(date.today().isoformat())
 
             new_data = {
                 "name": name,
@@ -557,9 +583,9 @@ class App:
                 "created_on": task_data.get('created_on', date.today().isoformat()),
                 "completed_on": task_data.get('completed_on', None),
                 "proof": task_data.get('proof', None),
-                # Novos Campos
-                "min_time_val": time_val.get().strip(),
-                "min_time_unit": time_unit.get()
+                "min_time_val": current_time_val,
+                "min_time_unit": current_time_unit,
+                "min_time_last_set": final_signed_date # <--- SALVA COM HASH
             }
             
             cfg = load_config_data()
@@ -570,7 +596,7 @@ class App:
             win.destroy()
 
         ttk.Button(frame, text="Salvar Alterações", command=pre_save_check).pack(fill=tk.X, pady=10)
-
+        
     def check_dreamer_vs_doer(self, parent, val, unit):
         """Janela Modal: Sonhador vs Realizador."""
         alert_win = tk.Toplevel(parent)

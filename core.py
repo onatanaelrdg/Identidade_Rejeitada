@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import shutil
+import hashlib
 import platform
 import subprocess
 from datetime import datetime, date
@@ -190,3 +191,34 @@ def center_window(win, width, height):
     x = (screen_width // 2) - (width // 2)
     y = (screen_height // 2) - (height // 2)
     win.geometry(f'{width}x{height}+{x}+{y}')
+
+# --- SEGURANÇA ANTI-TRAPAÇA ---
+SECRET_SALT = "DISCIPLINA_NAO_VEM_DE_FORÇA_DE_VONTADE_MAS_DA_AUSENCIA_DE_ESCOLHA"
+
+def sign_date(date_str):
+    """Gera uma string: 'YYYY-MM-DD|HASH_DE_VERIFICACAO'."""
+    if not date_str: return None
+    # Cria uma assinatura única usando a data + o segredo
+    data_to_hash = f"{date_str}{SECRET_SALT}".encode('utf-8')
+    signature = hashlib.sha256(data_to_hash).hexdigest()
+    return f"{date_str}|{signature}"
+
+def verify_and_get_date(signed_date_str):
+    """
+    Verifica se a data foi adulterada.
+    Retorna a data (string) se for válida.
+    Retorna False se foi adulterada ou inválida.
+    """
+    if not signed_date_str or "|" not in signed_date_str:
+        return False # Formato inválido ou antigo (tratar como inválido)
+    
+    date_part, signature_part = signed_date_str.split("|")
+    
+    # Recalcula o hash esperado
+    expected_data = f"{date_part}{SECRET_SALT}".encode('utf-8')
+    expected_signature = hashlib.sha256(expected_data).hexdigest()
+    
+    if signature_part == expected_signature:
+        return date_part # É legítimo
+    else:
+        return False # PEGO NO FLAGRA!
