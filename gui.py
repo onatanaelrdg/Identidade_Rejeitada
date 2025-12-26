@@ -102,7 +102,8 @@ class App:
             self.tasks = self.config_data.get('tasks', {})
             if task_id not in self.tasks: return
             task = self.tasks[task_id]
-            ptype, pdata = self.get_proof(task['name'])
+
+            ptype, pdata = self.get_proof(task)
             
             if pdata:
                 task['completed_on'] = date.today().isoformat()
@@ -124,29 +125,108 @@ class App:
                     save_config_data(self.config_data)
             else: var.set(False)
 
-    def get_proof(self, task_name):
+    # No arquivo gui.py, dentro da classe App
+
+    def get_proof(self, task):
+        """Janela de prova com validação rígida de tempo."""
+        task_name = task.get('name', 'Tarefa')
+        min_val = task.get('min_time_val', '')
+        min_unit = task.get('min_time_unit', 'minutos')
+        
+        # Monta a string de validação (Ex: "30 minutos" ou "4 horas")
+        validation_str = f"{min_val} {min_unit}" if min_val else None
+
         win = tk.Toplevel(self.root)
         win.title(f"Prova: {task_name}")
-        center_window(win, 400, 300)
-        win.transient(self.root); win.grab_set()
-        ttk.Label(win, text="Descreva ou anexe imagem.").pack(pady=10)
-        entry = tk.Text(win, height=10, width=50); entry.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
+        center_window(win, 450, 400) # Aumentei um pouco a altura
+        win.transient(self.root)
+        win.grab_set()
+        
+        # Container principal
+        frame = ttk.Frame(win, padding=15)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- SEÇÃO DE VALIDAÇÃO DE TEMPO ---
+        time_entry = None
+        
+        if validation_str:
+            # Container visual para a validação
+            val_frame = tk.LabelFrame(frame, text="Verificação de Tempo", padx=10, pady=10, bg="#2E2E2E", fg="#E0E0E0")
+            val_frame.pack(fill=tk.X, pady=(0, 15))
+            
+            # Label com o alvo
+            ttk.Label(val_frame, text=f"Tempo Mínimo Exigido: {validation_str}", 
+                      font=("Segoe UI", 10, "bold"), foreground="#FFCC00", background="#2E2E2E").pack(anchor=tk.W)
+            
+            # Input do usuário
+            row = tk.Frame(val_frame, bg="#2E2E2E")
+            row.pack(fill=tk.X, pady=(5, 0))
+            
+            ttk.Label(row, text="Tempo trabalhado:", background="#2E2E2E", foreground="#FFFFFF").pack(side=tk.LEFT, padx=(0, 5))
+            
+            time_entry = ttk.Entry(row)
+            time_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            
+            ttk.Label(val_frame, text=f"(Digite exatamente: '{validation_str}')", 
+                      font=("Segoe UI", 8), foreground="#888888", background="#2E2E2E").pack(anchor=tk.W)
+
+        # --- SEÇÃO DE PROVA (TEXTO/IMAGEM) ---
+        ttk.Label(frame, text="Descreva o que foi feito ou anexe prova:").pack(anchor=tk.W, pady=(0, 5))
+        
+        entry = tk.Text(frame, height=8, width=50)
+        entry.pack(pady=5, fill=tk.BOTH, expand=True)
+        
         res = {"t": None, "d": None}
         
+        def check_time_validation():
+            """Retorna True se passou na validação ou se não há validação."""
+            if not validation_str:
+                return True
+                
+            user_input = time_entry.get().strip()
+            
+            # Validação EXATA (String match)
+            if user_input != validation_str:
+                messagebox.showerror("Integridade Falhou", 
+                                     f"Você definiu um mínimo de '{validation_str}'.\n"
+                                     f"Você digitou '{user_input}'.\n\n"
+                                     "Se você fez menos, não marque como concluído.\n"
+                                     "Se fez o tempo certo, digite exatamente igual.",
+                                     parent=win)
+                return False
+            return True
+
         def save_txt():
+            if not check_time_validation(): return
+            
             d = entry.get("1.0", tk.END).strip()
-            if d: res["t"]="text"; res["d"]=d; win.destroy()
+            if d: 
+                res["t"] = "text"
+                res["d"] = d
+                win.destroy()
+            else:
+                messagebox.showwarning("Prova Vazia", "Escreva algo sobre a tarefa.", parent=win)
+
         def save_img():
+            if not check_time_validation(): return
+
             fp = filedialog.askopenfilename(filetypes=[("Imagens", "*.png *.jpg *.jpeg")])
             if fp:
                 try:
                     np = os.path.join(PROOFS_DIR, f"proof_{date.today()}_{os.path.basename(fp)}")
-                    shutil.copy(fp, np); res["t"]="image"; res["d"]=np; win.destroy()
-                except: pass
+                    shutil.copy(fp, np)
+                    res["t"] = "image"
+                    res["d"] = np
+                    win.destroy()
+                except Exception as e:
+                    messagebox.showerror("Erro", f"Erro ao salvar imagem: {e}")
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=10, fill=tk.X)
         
-        btn = ttk.Frame(win); btn.pack(pady=10)
-        ttk.Button(btn, text="Texto", command=save_txt).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn, text="Imagem", command=save_img).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Salvar Texto", command=save_txt).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        ttk.Button(btn_frame, text="Anexar Imagem", command=save_img).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        
         self.root.wait_window(win)
         return res["t"], res["d"]
 
