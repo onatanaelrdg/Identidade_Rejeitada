@@ -8,7 +8,7 @@ from datetime import date, timedelta, datetime
 from core import (
     load_config_data, save_config_data, log_event, run_backup_system,
     set_system_volume, get_tasks_for_today, center_window,
-    IS_WINDOWS, IS_MACOS, IS_LINUX
+    IS_WINDOWS, IS_MACOS, IS_LINUX, get_random_rejections
 )
 
 class IdentityRejectionSystem:
@@ -19,6 +19,7 @@ class IdentityRejectionSystem:
         self.tasks = self.config.get('tasks', {})
         self.running = False
         self.rejection_thread = None
+        self.start_time = None
         self.run_new_day_check()
 
     def reload_config(self):
@@ -74,7 +75,9 @@ class IdentityRejectionSystem:
 
     def all_tasks_completed(self):
         tasks_for_today = get_tasks_for_today()
-        if not tasks_for_today: return False # Se não tem tarefas, o dia não está completo ainda? Ou já? Ajuste conforme gosto.
+        # Se não tem tarefas para hoje, considera "completo" para não punir à toa? 
+        # Ou considera incompleto? Vou manter a lógica anterior: se vazio, não pune.
+        if not tasks_for_today: return True 
         
         all_routine_completed = True
         for task in tasks_for_today.values():
@@ -98,30 +101,48 @@ class IdentityRejectionSystem:
         if min_int > max_int: min_int = max_int - 10
         return random.randint(min_int, max_int)
 
-    def play_rejection(self):
-        if not self.config['rejections']: return
-        rejection = random.choice(self.config['rejections'])
+    def play_rejection_sequence(self, is_severe_mode):
+        """Toca 3 rejeições diferentes. Se severe_mode=True, usa popup gigante."""
+        rejections = get_random_rejections(3) # Pega 3 frases diferentes
         tts_speed = self.config.get('tts_speed', 3)
-        log_event("rejection_played", rejection)
         
-        for _ in range(3):
+        log_event("rejection_sequence", f"Severe: {is_severe_mode} | {rejections}")
+        
+        for rejection in rejections:
             if not self.running: break
+            
+            # Recarrega para ver se o usuário ativou o modo estudo no meio do desespero
+            self.reload_config()
+            if self.config.get('study_mode', False) or self.all_tasks_completed():
+                break
+
             set_system_volume(100)
-            self.popup_callback(rejection) 
+            
+            # Chama o popup apropriado
+            self.popup_callback(rejection, is_severe=is_severe_mode)
+            
             self.speak_text(rejection, tts_speed)
             time.sleep(0.5) 
-            
+
     def run_rejection_loop(self):
+        self.start_time = time.time() # Marca hora de início
+
         while self.running:
             try:
                 self.reload_config()
+                
+                # Se estiver em modo estudo ou tudo completo, reseta o timer de severidade?
+                # Não, o tempo corre. Se ele sair do modo estudo depois de 2h, já volta no modo hard.
+                # Mas enquanto está pausado, ele não pune.
+                
                 if self.config.get('study_mode', False) or self.all_tasks_completed():
                     time.sleep(30)
                     continue
 
                 interval = self.get_next_interval()
-                print(f"Próxima rejeição em {interval} min.")
+                #print(f"Próxima rejeição em {interval} min.")
                 
+                # Aguarda o intervalo (checa status a cada 10s)
                 for i in range(interval * 60):
                     if not self.running: break
                     if i % 10 == 0:
@@ -130,7 +151,13 @@ class IdentityRejectionSystem:
                     time.sleep(1)
                 
                 if self.running and not self.config.get('study_mode', False) and not self.all_tasks_completed():
-                    self.play_rejection()
+                    
+                    # Verifica se já passaram 15 minutos (900 segundos) desde o início do daemon
+                    elapsed_time = time.time() - self.start_time
+                    is_severe = elapsed_time > 900
+                    
+                    self.play_rejection_sequence(is_severe_mode=is_severe)
+
             except Exception as e:
                 print(f"Erro loop: {e}")
                 time.sleep(60)
@@ -145,23 +172,58 @@ class IdentityRejectionSystem:
         self.running = False
         if self.rejection_thread: self.rejection_thread.join(timeout=2)
 
-def show_standalone_popup(root, text):
+# --- SISTEMA DE POPUPS ---
+
+def show_standalone_popup(root, text, is_severe=False):
+    """Exibe o popup. Se severe=True, cobre 80% da tela."""
     try:
         popup = tk.Toplevel(root)
         popup.title("IDENTIDADE REJEITADA")
-        center_window(popup, 500, 200)
         popup.attributes("-topmost", True)
         popup.overrideredirect(True) 
         popup.configure(bg="#1A0000")
-        label = tk.Label(popup, text=text, font=("Impact", 20), fg="#FF0000", bg="#1A0000", wraplength=480, justify=tk.CENTER)
+        
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        
+        if is_severe:
+            # 80% da tela
+            w = int(screen_width * 0.8)
+            h = int(screen_height * 0.8)
+            x = (screen_width - w) // 2
+            y = (screen_height - h) // 2
+            font_size = 40 # Fonte gigante
+        else:
+            # Popup "discreto" (padrão antigo)
+            w, h = 500, 200
+            x = (screen_width - w) // 2
+            y = (screen_height - h) // 2
+            font_size = 20
+
+        popup.geometry(f"{w}x{h}+{x}+{y}")
+        
+        label = tk.Label(popup, text=text, font=("Impact", font_size), 
+                         fg="#FF0000", bg="#1A0000", 
+                         wraplength=w-40, justify=tk.CENTER)
         label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Fecha automaticamente após 8 segundos (tempo médio de leitura/fala)
         popup.after(8000, popup.destroy)
-    except: pass
+        
+        # Força update para garantir que apareça na hora
+        popup.update()
+        
+    except Exception as e:
+        print(f"Erro popup: {e}")
 
 def run_daemon_process():
     root = tk.Tk()
-    root.withdraw()
-    system = IdentityRejectionSystem(popup_callback_func=lambda text: show_standalone_popup(root, text))
+    root.withdraw() # Janela principal oculta
+    
+    # Callback agora aceita o argumento is_severe
+    system = IdentityRejectionSystem(
+        popup_callback_func=lambda text, is_severe=False: show_standalone_popup(root, text, is_severe)
+    )
     system.start()
     try: root.mainloop()
     except KeyboardInterrupt: system.stop()

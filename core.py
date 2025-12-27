@@ -4,6 +4,7 @@ import sys
 import json
 import shutil
 import hashlib
+import random
 import platform
 import subprocess
 from datetime import datetime, date
@@ -229,3 +230,18 @@ def verify_and_get_date(signed_date_str):
         return date_part # É legítimo
     else:
         return False # PEGO NO FLAGRA!
+
+def get_random_rejections(count=3):
+    """Retorna uma lista de 'count' rejeições únicas aleatórias."""
+    config = load_config_data()
+    rejections = config.get('rejections', [])
+    
+    if not rejections:
+        return ["Você não configurou rejeições."]
+    
+    # Se pedir mais do que existe, embaralha e retorna tudo o que tem
+    if count >= len(rejections):
+        random.shuffle(rejections)
+        return rejections
+    
+    return random.sample(rejections, k=count)
