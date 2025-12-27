@@ -90,12 +90,20 @@ class App:
             for task_id, task in self.tasks_for_today.items():
                 f = ttk.Frame(self.scrollable_frame, padding=5)
                 f.pack(fill=tk.X, pady=2)
-                var = tk.BooleanVar(value=(task.get('completed_on') == today_str))
+                
+                # Verifica se a data salva tem a assinatura correta
+                raw_completed = task.get('completed_on')
+                valid_date = verify_and_get_date(raw_completed) 
+                is_completed = (valid_date == today_str)
+
+                var = tk.BooleanVar(value=is_completed)
                 cb = ttk.Checkbutton(f, text=task['name'], variable=var, command=lambda v=var, tid=task_id: self.on_task_check(v, tid))
                 cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
-                if task.get('completed_on') == today_str:
+                
+                if is_completed:
                     cb.config(state=tk.DISABLED)
                     ttk.Label(f, text="Concluído", font=("Segoe UI", 9, "italic"), foreground="#00A000").pack(side=tk.RIGHT)
+                
                 self.task_widgets[task_id] = {'var': var, 'cb': cb}
 
     def show_celebration_popup(self):
@@ -141,29 +149,33 @@ class App:
             ptype, pdata = self.get_proof(task)
             
             if pdata:
-                task['completed_on'] = date.today().isoformat()
+                # Assina a data de hoje antes de salvar
+                signed_today = sign_date(date.today().isoformat())
+                task['completed_on'] = signed_today
+                
                 task['proof'] = pdata; task['proof_type'] = ptype
                 self.config_data['tasks'] = self.tasks
                 save_config_data(self.config_data)
                 log_event("task_completed", f"{task_id}: {task['name']}")
                 self.update_task_list()
                 
+                # Verifica se TUDO foi concluído (agora checando hashes)
                 tasks_for_today = get_tasks_for_today()
                 all_done = True
                 if not tasks_for_today: all_done = False
+                
                 for t in tasks_for_today.values():
-                    if t.get('completed_on') != date.today().isoformat(): all_done = False; break
+                    # Verifica hash de cada tarefa
+                    v_date = verify_and_get_date(t.get('completed_on'))
+                    if v_date != date.today().isoformat(): 
+                        all_done = False; break
                 
                 if all_done:
-                    # Atualiza data ANTES de mostrar o popup
+                    # Assina a data geral também, por segurança
                     self.config_data['last_completion_date'] = date.today().isoformat()
                     save_config_data(self.config_data)
-                    
-                    # Chama a Nova Celebração
                     self.show_celebration_popup()
             else: var.set(False)
-
-    # No arquivo gui.py, dentro da classe App
 
     def get_proof(self, task):
         """Janela de prova com validação rígida de tempo."""
