@@ -464,15 +464,14 @@ class App:
         if hasattr(self, 'tray'): self.tray.stop()
         self.root.quit(); sys.exit()
 
-    # --- SUBSTITUA A FUNÇÃO open_task_editor POR ESTA (VERSÃO COM HASH ANTI-TRAPAÇA) ---
     def open_task_editor(self, parent, task_id=None, callback=None):
-        """Janela unificada para Criar e Editar tarefas com Trava de 7 dias BLINDADA."""
+        """Janela unificada com Trava de 7 dias, Hash e Horário Fixo."""
         is_edit = task_id is not None
         title = "Editar Tarefa" if is_edit else "Nova Tarefa"
         
         win = tk.Toplevel(parent)
         win.title(title)
-        center_window(win, 450, 500)
+        center_window(win, 450, 550) # Aumentei altura
         win.transient(parent)
         win.grab_set()
         
@@ -491,49 +490,32 @@ class App:
 
         # 2. Tempo Mínimo Diário
         ttk.Label(frame, text="Tempo Mínimo Diário:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(5, 0))
-        
         time_frame = ttk.Frame(frame)
         time_frame.pack(fill=tk.X, pady=(0, 10))
         
         time_val = tk.StringVar(value=str(task_data.get('min_time_val', '')))
         time_unit = tk.StringVar(value=task_data.get('min_time_unit', 'minutos'))
-        
-        # Entry para números apenas
         vcmd = (win.register(lambda P: P.isdigit() or P == ""), '%P')
         time_entry = ttk.Entry(time_frame, textvariable=time_val, validate="key", validatecommand=vcmd, width=10)
         time_entry.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Radio buttons
         ttk.Radiobutton(time_frame, text="Minutos", variable=time_unit, value="minutos").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(time_frame, text="Horas", variable=time_unit, value="horas").pack(side=tk.LEFT, padx=5)
 
-        # --- LÓGICA DE TRAVA BLINDADA (HASH) ---
+        # Lógica de Trava (Hash)
         raw_last_set = task_data.get('min_time_last_set', None)
-        
-        # Verifica a integridade da data
         valid_date_str = verify_and_get_date(raw_last_set)
-        
         tampered = False
         if raw_last_set and valid_date_str is False:
             tampered = True
-            # Se detectou adulteração, considera HOJE como a data (PUNIÇÃO)
             valid_date_str = date.today().isoformat()
-            messagebox.showwarning("⚠️ ALERTA DE SEGURANÇA", 
-                                   "Identificamos uma tentativa de alteração manual no arquivo de configuração.\n\n"
-                                   "Como penalidade, a trava de 7 dias foi REINICIADA agora.", parent=win)
-        
-        # Se a data for nula (tarefa antiga sem hash), usa hoje
-        if not valid_date_str:
-            valid_date_str = date.today().isoformat()
+            messagebox.showwarning("⚠️ ALERTA", "Adulteração detectada. Trava reiniciada.", parent=win)
+        if not valid_date_str: valid_date_str = date.today().isoformat()
 
         is_locked = False
         remaining = 0
-        
         if is_edit:
             last_set_date = date.fromisoformat(valid_date_str)
             days_since_change = (date.today() - last_set_date).days
-            
-            # Se foi adulterado, bloqueia na hora (já que days_since_change será 0)
             if days_since_change < 7:
                 is_locked = True
                 remaining = 7 - days_since_change
@@ -543,17 +525,22 @@ class App:
             for child in time_frame.winfo_children():
                 try: child.configure(state='disabled')
                 except: pass
-            
             lock_msg = f"🔒 Tempo travado por mais {remaining} dias"
             if tampered: lock_msg += " (PENALIDADE)"
-            
-            lock_label = ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8, "bold"))
-            lock_label.pack(anchor=tk.W, pady=(0, 10))
+            ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-        # 3. Agenda
+        # 3. Horário Fixo (NOVO)
+        ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        ttk.Label(frame, text="Horário Fixo de Início (Opcional):", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
+        ttk.Label(frame, text="Formato HH:MM (Ex: 14:30). Deixe vazio se não usar.", font=("Segoe UI", 8), foreground="#888").pack(anchor=tk.W)
+        
+        fixed_time_var = tk.StringVar(value=task_data.get('fixed_start_time', ''))
+        fixed_time_entry = ttk.Entry(frame, textvariable=fixed_time_var, width=10)
+        fixed_time_entry.pack(anchor=tk.W, pady=(0, 10))
+
+        # 4. Agenda
         ttk.Label(frame, text="Frequência:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         sched_var = tk.StringVar(value=task_data.get('schedule_type', 'daily'))
-        
         days_frame = ttk.Frame(frame, padding=(10, 5))
         dias_vars = []
         dias_nomes = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
@@ -561,10 +548,8 @@ class App:
         def toggle_days(*args):
             state = "normal" if sched_var.get() == "custom" else "disabled"
             for w in days_frame.winfo_children(): w.configure(state=state)
-
         ttk.Radiobutton(frame, text="Todos os dias", variable=sched_var, value="daily", command=toggle_days).pack(anchor=tk.W)
         ttk.Radiobutton(frame, text="Personalizado:", variable=sched_var, value="custom", command=toggle_days).pack(anchor=tk.W)
-
         days_frame.pack(fill=tk.X)
         saved_days = task_data.get('schedule_days', [])
         for i, nome in enumerate(dias_nomes):
@@ -574,7 +559,7 @@ class App:
             dias_vars.append(dv)
         toggle_days()
 
-        # 4. Checkbox Arquivar
+        # 5. Checkbox Arquivar
         ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
         is_archived = (task_data.get('status') == 'encerrado')
         archive_var = tk.BooleanVar(value=is_archived)
@@ -584,10 +569,19 @@ class App:
         def pre_save_check():
             name = name_entry.get().strip()
             val_str = time_val.get().strip()
-            
+            fixed_time = fixed_time_var.get().strip()
+
             if not name:
                 messagebox.showerror("Erro", "Nome da tarefa é obrigatório.", parent=win)
                 return
+            
+            # Validação simples de HH:MM
+            if fixed_time:
+                try:
+                    time.strptime(fixed_time, "%H:%M")
+                except ValueError:
+                    messagebox.showerror("Erro", "Formato de hora inválido. Use HH:MM (ex: 14:30)", parent=win)
+                    return
 
             if val_str and not is_locked:
                 try:
@@ -597,10 +591,8 @@ class App:
                     old_unit = task_data.get('min_time_unit', 'minutos')
                     current_minutes = val * 60 if unit == 'horas' else val
                     old_minutes = (int(old_val) * 60 if old_unit == 'horas' else int(old_val)) if old_val else 0
-
                     if current_minutes > old_minutes:
-                         if not self.check_dreamer_vs_doer(win, val, unit):
-                             return 
+                         if not self.check_dreamer_vs_doer(win, val, unit): return 
                 except ValueError: pass
             save_final()
 
@@ -615,13 +607,8 @@ class App:
             old_time_val = str(task_data.get('min_time_val', ''))
             old_time_unit = task_data.get('min_time_unit', 'minutos')
             
-            # Recupera a data validada que calculamos no início
-            # Se for uma data nova (tarefa nova), usa Hoje Assinado
             final_signed_date = raw_last_set
-            
-            # Se houve mudança real no tempo (ou é novo), ou se houve adulteração (tampered)
             if (current_time_val != old_time_val) or (current_time_unit != old_time_unit) or not is_edit or tampered or not raw_last_set:
-                # Gera nova assinatura para HOJE
                 final_signed_date = sign_date(date.today().isoformat())
 
             new_data = {
@@ -634,13 +621,13 @@ class App:
                 "proof": task_data.get('proof', None),
                 "min_time_val": current_time_val,
                 "min_time_unit": current_time_unit,
-                "min_time_last_set": final_signed_date # <--- SALVA COM HASH
+                "min_time_last_set": final_signed_date,
+                "fixed_start_time": fixed_time_var.get().strip() # <--- SALVA O HORÁRIO
             }
             
             cfg = load_config_data()
             cfg['tasks'][final_id] = new_data
             save_config_data(cfg)
-            
             if callback: callback()
             win.destroy()
 
