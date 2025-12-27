@@ -114,11 +114,18 @@ def log_event(event_type, details):
 def load_config_data():
     default_config = {
         'rejections': [
-            "Eu não quero emagrecer", "Eu não quero falar inglês fluentemente",
+            "Eu não quero emagrecer",
             "Eu não quero ser rico", "Eu não quero poder ajudar minha mãe",
             "Eu quero continuar sozinho pro resto da minha vida",
             "Eu não quero realizar meus sonhos", "Eu não quero ter disciplina",
             "Eu não quero ser respeitado", "Eu não quero ter controle da minha vida"
+        ],
+        'celebrations': [
+            "Você está mais perto da vida que quer. Parabéns!",
+            "Seu eu do futuro agradece pelas escolhas de hoje. Parabéns!",
+            "Disciplina é liberdade. Você venceu o dia de hoje. Parabéns!",
+            "Orgulhe-se do que construiu hoje. Você merece. Parabéns!",
+            "Aprecie sua vitória de hoje. Ela foi merecida. Parabéns!"
         ],
         'tasks': {},
         'tts_speed': 3,

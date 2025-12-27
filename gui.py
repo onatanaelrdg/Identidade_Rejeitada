@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import shutil
+import random
 import threading
 import subprocess
 import tkinter as tk
@@ -97,6 +98,39 @@ class App:
                     ttk.Label(f, text="Concluído", font=("Segoe UI", 9, "italic"), foreground="#00A000").pack(side=tk.RIGHT)
                 self.task_widgets[task_id] = {'var': var, 'cb': cb}
 
+    def show_celebration_popup(self):
+        """Exibe popup verde, toca áudio calmo e parabeniza."""
+        win = tk.Toplevel(self.root)
+        win.title("DIA CONCLUÍDO")
+        center_window(win, 500, 250)
+        win.transient(self.root)
+        win.grab_set()
+        
+        # Configuração Visual: Verde Sereno
+        bg_color = "#1B5E20" # Verde escuro elegante
+        fg_color = "#FFFFFF"
+        win.configure(bg=bg_color)
+        
+        # Escolhe frase
+        config = load_config_data()
+        phrases = config.get('celebrations', ["Parabéns pelo foco."])
+        phrase = random.choice(phrases)
+        
+        # Layout
+        frame = tk.Frame(win, bg=bg_color, padx=20, pady=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        tk.Label(frame, text="✅ VOCÊ CONSEGUIU!", font=("Impact", 22), 
+                 bg=bg_color, fg="#66BB6A").pack(pady=(0, 15))
+        
+        tk.Label(frame, text=phrase, font=("Segoe UI", 12), 
+                 bg=bg_color, fg=fg_color, wraplength=450, justify=tk.CENTER).pack(pady=(0, 20))
+        
+        # Botão Fechar
+        tk.Button(frame, text="FECHAR", font=("Segoe UI", 10, "bold"),
+                  bg="#2E7D32", fg="white", relief=tk.FLAT, padx=20, pady=8, cursor="hand2",
+                  command=win.destroy).pack()
+    
     def on_task_check(self, var, task_id):
         if var.get(): 
             self.config_data = load_config_data()
@@ -121,9 +155,12 @@ class App:
                     if t.get('completed_on') != date.today().isoformat(): all_done = False; break
                 
                 if all_done:
-                    messagebox.showinfo("Parabéns!", "Todas as atividades de rotina foram concluídas! Os áudios estão desativados por hoje.")
+                    # Atualiza data ANTES de mostrar o popup
                     self.config_data['last_completion_date'] = date.today().isoformat()
                     save_config_data(self.config_data)
+                    
+                    # Chama a Nova Celebração
+                    self.show_celebration_popup()
             else: var.set(False)
 
     # No arquivo gui.py, dentro da classe App
