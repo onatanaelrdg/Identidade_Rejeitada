@@ -4,13 +4,14 @@ import time
 import random
 import subprocess
 import os
+import json
 import tkinter as tk
 from datetime import date, timedelta, datetime
 from core import (
     load_config_data, save_config_data, log_event, run_backup_system,
     set_system_volume, get_tasks_for_today, center_window,
     IS_WINDOWS, IS_MACOS, IS_LINUX, get_random_rejections,
-    verify_and_get_date
+    verify_and_get_date, LOG_FILE # <--- Importando LOG_FILE do core
 )
 
 # --- GERENCIADOR DE ALERTA AMARELO ---
@@ -24,19 +25,18 @@ class YellowAlertManager:
         
     def show(self, task_name, task_time):
         if self.window and self.window.winfo_exists():
-            return # Já está mostrando
+            return 
             
         self.active_task_name = task_name
         self.window = tk.Toplevel(self.root)
         self.window.title("ALERTA DE DISCIPLINA")
         self.window.attributes("-topmost", True)
-        self.window.overrideredirect(True) # Sem bordas
-        self.window.configure(bg="#FFCC00") # Amarelo Alerta
+        self.window.overrideredirect(True) 
+        self.window.configure(bg="#FFCC00") 
         
-        # Tamanho e posição (Canto superior esquerdo ou centro)
         w, h = 400, 260
         screen_w = self.window.winfo_screenwidth()
-        x = screen_w - w - 20 # Canto direito
+        x = screen_w - w - 20 
         y = 20
         self.window.geometry(f"{w}x{h}+{x}+{y}")
         
@@ -58,19 +58,16 @@ class YellowAlertManager:
             try: self.window.destroy()
             except: pass
             self.window = None
-            self.shutdown_time = None # Reseta o timer de desligamento
+            self.shutdown_time = None 
 
     def check_shutdown(self):
-        """Verifica se deve desligar o PC."""
-        if not self.window: return # Sem alerta, sem perigo
+        if not self.window: return 
         
-        # Se ainda não definiu hora da morte, define agora (Random 0 a 15 min)
         if self.shutdown_time is None:
-            delay = random.randint(120, 900) # Entre 2min e 15min
+            delay = random.randint(120, 900) 
             self.shutdown_time = time.time() + delay
             print(f"DESLIGAMENTO AGENDADO PARA: {datetime.fromtimestamp(self.shutdown_time)}")
             
-        # Tchau querido
         if time.time() > self.shutdown_time:
             log_event("system_shutdown", f"Usuário ignorou horário fixo da tarefa: {self.active_task_name}")
             if IS_WINDOWS:
@@ -78,19 +75,113 @@ class YellowAlertManager:
             else:
                 os.system("shutdown -h now")
 
+# --- SESSÃO PSICOLÓGICA ---
+class PsychologicalSession:
+    """Popup roxo para sabotadores."""
+    @staticmethod
+    def show_punishment(root):
+        win = tk.Toplevel(root)
+        win.title("QUE PORRA QUE VOCÊ TÁ FAZENDO?")
+        
+        # Cor Roxa
+        bg_color = "#4B0082" 
+        fg_color = "#FFFFFF"
+        
+        win.configure(bg=bg_color)
+        win.attributes("-topmost", True)
+        
+        # Centraliza
+        w, h = 550, 320
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = (sw - w) // 2, (sh - h) // 2
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        
+        frame = tk.Frame(win, bg=bg_color, padx=20, pady=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        tk.Label(frame, text="SE SENTIU ESPERTO?", font=("Impact", 18), 
+                 bg=bg_color, fg="#DA70D6").pack(pady=(0, 15))
+        
+        msg = ("Você pode se achar inteligente, achando que encontrou uma forma de burlar o IRS. "
+               "Mas isso só mostra o quão patético você é.\n\n"
+               "Não faça mais isso. Você está se auto-destruindo com essa atitude.\n\n"
+               "Excluir o app ou matar o processo no gerenciador de tarefas... é a mesma coisa. "
+               "Faça logo o que tem que ser feito.")
+        
+        tk.Label(frame, text=msg, font=("Segoe UI", 11), 
+                 bg=bg_color, fg=fg_color, wraplength=500, justify=tk.CENTER).pack(pady=(0, 25))
+        
+        def on_close():
+            # Marca como revisado ao clicar no botão
+            log_event("SABOTAGE_REVIEWED", "Usuário recebeu revisão do DAEMON_DEAD.")
+            win.destroy()
+
+        tk.Button(frame, text="ENTENDI", font=("Segoe UI", 10, "bold"),
+                  bg="#800080", fg="white", relief=tk.FLAT, padx=20, pady=10, cursor="hand2",
+                  command=on_close).pack()
+        
+        # Trava o programa até o usuário aceitar a humilhação
+        win.grab_set()
+        root.wait_window(win)
+
 # -------------------------------------
 
 class IdentityRejectionSystem:
     def __init__(self, popup_callback_func, yellow_manager):
         self.popup_callback = popup_callback_func
-        self.yellow_manager = yellow_manager # Referência ao gerenciador amarelo
+        self.yellow_manager = yellow_manager 
         self.config = load_config_data()
+        
+        # --- VERIFICAÇÃO DE SABOTAGEM ---
+        self.check_sabotage_on_startup()
+        # --------------------------------
+
         threading.Thread(target=run_backup_system, daemon=True).start()
         self.tasks = self.config.get('tasks', {})
         self.running = False
         self.rejection_thread = None
         self.start_time = None 
         self.run_new_day_check()
+
+    def check_sabotage_on_startup(self):
+        """Verifica no JSON se houve DAEMON_DEAD hoje sem revisão posterior."""
+        try:
+            if not os.path.exists(LOG_FILE): return
+
+            today_str = date.today().isoformat()
+            
+            with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                logs = json.load(f)
+            
+            # Filtra logs de hoje
+            today_logs = [l for l in logs if l.get('date') == today_str]
+            
+            last_dead_time = None
+            last_reviewed_time = None
+            
+            for entry in today_logs:
+                etype = entry.get('type')
+                ts = entry.get('timestamp')
+                
+                if etype == "DAEMON_DEAD":
+                    last_dead_time = ts
+                elif etype == "SABOTAGE_REVIEWED":
+                    last_reviewed_time = ts
+            
+            # Lógica: Se houve morte, e (não foi revisada OU a revisão é mais antiga que a morte)
+            if last_dead_time:
+                needs_punishment = False
+                if not last_reviewed_time:
+                    needs_punishment = True
+                elif last_dead_time > last_reviewed_time:
+                    needs_punishment = True
+                
+                if needs_punishment:
+                    # Usa o root do gerenciador amarelo para mostrar o popup
+                    PsychologicalSession.show_punishment(self.yellow_manager.root)
+
+        except Exception as e:
+            print(f"Erro ao checar sabotagem: {e}")
 
     def reload_config(self):
         self.config = load_config_data()
@@ -162,49 +253,39 @@ class IdentityRejectionSystem:
 
     def check_fixed_schedule_violations(self):
         """Verifica se há tarefas de horário fixo atrasadas."""
-        # Se estiver em modo estudo, perdoa tudo (Assume que está fazendo a tarefa certa)
         if self.config.get('study_mode', False):
             self.yellow_manager.root.after(0, self.yellow_manager.hide)
             return
 
         tasks_today = get_tasks_for_today()
         now = datetime.now()
-        current_time_str = now.strftime("%H:%M")
         
         violation_found = False
         target_task_name = ""
         target_task_time = ""
 
         for task in tasks_today.values():
-            # Pula tarefas concluídas
             raw_comp = task.get('completed_on')
             if verify_and_get_date(raw_comp) == date.today().isoformat():
                 continue
 
             fixed_time = task.get('fixed_start_time')
             if fixed_time:
-                # Compara hora
                 try:
                     ft_hour, ft_min = map(int, fixed_time.split(':'))
                     fixed_dt = now.replace(hour=ft_hour, minute=ft_min, second=0, microsecond=0)
-                    
-                    # Se agora é maior ou igual ao horário fixo (e não foi feito)
                     if now >= fixed_dt:
                         violation_found = True
                         target_task_name = task['name']
                         target_task_time = fixed_time
-                        break # Pega a primeira violação
+                        break 
                 except: pass
 
         if violation_found:
-            # Invoca o alerta amarelo na thread principal
             self.yellow_manager.root.after(0, lambda: self.yellow_manager.show(target_task_name, target_task_time))
-            # Checa roleta russa do desligamento
             self.yellow_manager.check_shutdown()
         else:
-            # Tudo limpo, remove alerta
             self.yellow_manager.root.after(0, self.yellow_manager.hide)
-
 
     def play_rejection_sequence(self, is_severe_mode):
         rejections = get_random_rejections(3)
@@ -231,21 +312,16 @@ class IdentityRejectionSystem:
             try:
                 self.reload_config()
                 
-                # --- CHECAGEM DE HORÁRIO FIXO (NOVA) ---
-                # Roda a cada ciclo do loop para ser responsivo
                 self.check_fixed_schedule_violations()
-                # ---------------------------------------
 
                 if self.config.get('study_mode', False) or self.all_tasks_completed():
                     time.sleep(30)
                     continue
 
                 interval = self.get_next_interval()
-                # Loop de espera com check rápido
                 for i in range(interval * 60):
                     if not self.running: break
                     
-                    # Checa horário fixo a cada segundo também (para o desligamento ser preciso)
                     if i % 5 == 0: 
                         self.reload_config()
                         self.check_fixed_schedule_violations()
@@ -306,7 +382,6 @@ def run_daemon_process():
     root = tk.Tk()
     root.withdraw() 
     
-    # Inicializa o gerenciador amarelo na thread principal
     yellow_manager = YellowAlertManager(root)
     
     system = IdentityRejectionSystem(

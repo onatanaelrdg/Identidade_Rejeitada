@@ -50,8 +50,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Erro ao logar morte: {e}")
 
-        # 2. RESSUSCITA
         resurrect_daemon()
-        
-    # Se já estiver rodando, o logic.py simplesmente morre em paz,
-    # economizando memória até o próximo ciclo de 5 minutos.
+    # Se rodando, fecha.
