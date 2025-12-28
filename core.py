@@ -225,6 +225,34 @@ def log_blockchain_status(status_type, msg, target_category):
     except Exception as e:
         print(f"Erro no auditor blockchain: {e}")
 
+def punish_tampering():
+    """
+    Detectada adulteração.
+    """
+    log_event("ADULTERATION_DETECTED", "⚠️ ADULTERAÇÃO DETECTADA. INICIANDO PROTOCOLO DE RESET...")
+    
+    reset_type = "RESET_LOG"
+    reset_msg = "Esse log não está adulterado. Aproveite."
+    
+    now = datetime.now()
+    ts_iso = now.isoformat()
+    today_iso = date.today().isoformat()
+
+    for cat in ["security", "history"]:
+        target_file = FILES_MAP[cat]
+        
+        genesis_block = create_blockchain_block(None, reset_type, reset_msg, ts_iso, today_iso)
+        
+        try:
+            with open(target_file, 'w', encoding='utf-8') as f:
+                json.dump([genesis_block], f, ensure_ascii=False, indent=2)
+                f.flush(); os.fsync(f.fileno())
+                
+        except Exception as e:
+            print(f"Erro ao aplicar punição em {cat}: {e}")
+
+    log_blockchain_status("TOTAL_WIPE", "Punição aplicada. Logs resetados por adulteração.", "ALL")
+
 def verify_blockchain_integrity(category, scope="quick"):
     """
     Verifica se a corrente de hash está intacta.
@@ -261,6 +289,7 @@ def verify_blockchain_integrity(category, scope="quick"):
             if actual_prev_hash_in_block != expected_prev_hash:
                 msg = f"QUEBRA DE CORRENTE no índice {i}. PrevHash esperado: {expected_prev_hash[:10]}... Encontrado: {actual_prev_hash_in_block[:10]}..."
                 log_blockchain_status("INTEGRITY_FAILURE", msg, category)
+                punish_tampering() 
                 return False
 
             ts = current_block.get('timestamp', '')
@@ -275,6 +304,7 @@ def verify_blockchain_integrity(category, scope="quick"):
             if recalculated_hash != stored_hash:
                 msg = f"ADULTERAÇÃO DE CONTEÚDO no índice {i}. Hash gravado não bate com o conteúdo."
                 log_blockchain_status("TAMPERING_DETECTED", msg, category)
+                punish_tampering()
                 return False
         
         if scope == "full":
@@ -313,7 +343,7 @@ def log_event(event_type, details, category="system"):
     if category in ["security", "history"]:
         is_valid = verify_blockchain_integrity(category, scope="quick")
         if not is_valid:
-            log_event(f"ALERTA CRÍTICO: {category} log está corrompido! Verifique blockchain_log.json", category="security")
+            log_event(f"ALERTA CRÍTICO: {category} log está corrompido! Verifique blockchain_log.json", category="system")
     # -------------------------------------
     
     now = datetime.now()
