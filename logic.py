@@ -3,11 +3,20 @@ import subprocess
 import os
 import sys
 import time
+import json
+from datetime import date
 
 try:
-    from core import log_event
+    from core import (
+        log_event, LOG_FILE, get_tasks_for_today, 
+        verify_and_get_date, load_config_data
+    )
 except ImportError:
-    def log_event(type, msg): print(f"LOG [{type}]: {msg}")
+    def log_event(t, m): print(f"LOG [{t}]: {m}")
+    LOG_FILE = "config/logging.json"
+    def get_tasks_for_today(): return {}
+    def verify_and_get_date(d): return d
+    def load_config_data(): return {}
 
 # Configuração
 SCRIPT_NAME = "identidade_rejeitada.py" 
@@ -22,7 +31,6 @@ def get_daemon_path():
 
 def is_daemon_running():
     """Verifica se o daemon já está rodando."""
-    # Usa wmic para buscar a assinatura exata do processo
     cmd = 'wmic process get commandline'
     try:
         output = subprocess.check_output(cmd, shell=True).decode(errors='ignore')
@@ -34,21 +42,77 @@ def is_daemon_running():
 
 def resurrect_daemon():
     script_path = get_daemon_path()
-    
-    if os.name == 'nt': # Windows
-        # pythonw inicia sem janela preta
-        # DETACHED_PROCESS (0x00000008) blinda o processo filho
+    if os.name == 'nt':
         subprocess.Popen(["pythonw", script_path, DAEMON_FLAG], 
                          creationflags=subprocess.CREATE_NO_WINDOW | 0x00000008)
     else:
         subprocess.Popen(["python", script_path, DAEMON_FLAG])
 
-if __name__ == "__main__":
-    if not is_daemon_running():        
-        try:
-            log_event("DAEMON_DEAD", "ALERTA CRÍTICO: O processo do Daemon não foi encontrado. Ressurreição iniciada.")
-        except Exception as e:
-            print(f"Erro ao logar morte: {e}")
+def check_if_tasks_completed():
+    """
+    Retorna True se TODAS as tarefas de hoje já estiverem concluídas/validadas.
+    Nesse caso, o Daemon não é obrigado a estar rodando.
+    """
+    tasks = get_tasks_for_today()
+    if not tasks: return False # Se não tem tarefas, assume que precisa rodar
+    
+    today_str = date.today().isoformat()
+    all_done = True
+    
+    for task in tasks.values():
+        raw_comp = task.get('completed_on')
+        valid_date = verify_and_get_date(raw_comp)
+        if valid_date != today_str:
+            all_done = False
+            break
+            
+    return all_done
 
-        resurrect_daemon()
-    # Se rodando, fecha.
+def has_daemon_started_today():
+    """
+    Verifica no log se existe um evento 'system_start' com a data de hoje.
+    Retorna True se o Daemon já rodou pelo menos uma vez hoje.
+    """
+    try:
+        if not os.path.exists(LOG_FILE): return False
+        
+        today_str = date.today().isoformat()
+        with open(LOG_FILE, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+            
+        # Procura por system_start na data de hoje
+        for entry in logs:
+            if entry.get('date') == today_str and entry.get('type') == 'system_start':
+                return True
+    except:
+        pass
+    return False
+
+if __name__ == "__main__":
+    if not is_daemon_running():
+        
+        # --- INTELIGÊNCIA ---
+        
+        # 1. Se já acabou tudo por hoje, deixa o usuário em paz.
+        if check_if_tasks_completed():
+            sys.exit()
+
+        # 2. Se as tarefas NÃO estão feitas, precisamos saber se é Boot ou Sabotagem.
+        started_today = has_daemon_started_today()
+        
+        if started_today:
+            # CENÁRIO: SABOTAGEM
+            # O Daemon já tinha iniciado hoje, e agora sumiu. O usuário matou.
+            try:
+                log_event("DAEMON_DEAD", "ALERTA: Daemon iniciado hoje mas processo sumiu (Sabotagem).")
+            except: pass
+            resurrect_daemon()
+            
+        else:
+            # CENÁRIO: BOOT / LOGIN
+            # O Daemon ainda não registrou presença hoje. Provavelmente o PC acabou de ligar.
+            # Apenas ressuscita (inicia) sem gerar log de morte.
+            log_event("WATCHDOG_SYSTEM", "Primeiro boot do dia ou delay de registro. Iniciando silenciosamente.")
+            resurrect_daemon()
+
+    # Se já estiver rodando, tudo ok.
