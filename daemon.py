@@ -196,7 +196,7 @@ class PsychologicalSession:
         win.attributes("-topmost", True)
         
         # Centraliza
-        w, h = 550, 320
+        w, h = 550, 370
         sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
         x, y = (sw - w) // 2, (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
@@ -207,11 +207,15 @@ class PsychologicalSession:
         tk.Label(frame, text="SE SENTIU ESPERTO?", font=("Impact", 18), 
                  bg=bg_color, fg="#DA70D6").pack(pady=(0, 15))
         
-        msg = ("Você pode se achar inteligente, achando que encontrou uma forma de burlar o IRS. "
-               "Mas isso só mostra o quão patético você é.\n\n"
-               "Não faça mais isso. Você está se auto-destruindo com essa atitude.\n\n"
-               "Excluir o app ou matar o processo no gerenciador de tarefas... é a mesma coisa. "
-               "Faça logo o que tem que ser feito.")
+        msg = ("Detectamos um fechamento forçado do IRS. Possivelmente atráves do gerenciador de tarefas. "
+               "Amigo, por que você fez isso?\n\n"
+
+               "Se estiver muito difícil, basta excluir o programa.\n"
+               "Ninguém vai te julgar. As pessoas vão te entender.\n"
+               "Você pode voltar ao seu eu normal, que toooodos amam.\n\n"
+
+               "Agora, se você deseja continuar. Não faça mais isso. Você está se auto-destruindo com essa atitude.\n"
+               "Abra o programa e faça logo o que tem que ser feito.")
         
         tk.Label(frame, text=msg, font=("Segoe UI", 11), 
                  bg=bg_color, fg=fg_color, wraplength=500, justify=tk.CENTER).pack(pady=(0, 25))
@@ -460,7 +464,7 @@ class IdentityRejectionSystem:
                 
                 if self.running and not self.config.get('study_mode', False) and not self.all_tasks_completed():
                     elapsed = time.time() - self.start_time
-                    is_severe = elapsed > 900
+                    is_severe = elapsed > 1800
                     self.play_rejection_sequence(is_severe_mode=is_severe)
 
             except Exception as e:
@@ -483,7 +487,7 @@ class IdentityRejectionSystem:
 # --- SISTEMA DE POPUPS ---
 
 def show_standalone_popup(root, text, is_severe=False):
-    """Exibe o popup vermelho de rejeição."""
+    """Exibe o popup vermelho de rejeição com EGO ACTIVATION."""
     try:
         popup = tk.Toplevel(root)
         popup.title("IDENTIDADE REJEITADA")
@@ -495,17 +499,33 @@ def show_standalone_popup(root, text, is_severe=False):
         screen_height = root.winfo_screenheight()
         
         if is_severe:
+            # Modo Brutal (80% da tela)
             w, h = int(screen_width * 0.8), int(screen_height * 0.8)
             x, y = (screen_width - w) // 2, (screen_height - h) // 2
             font_size = 40
         else:
+            # Modo Padrão
             w, h = 500, 200
             x, y = (screen_width - w) // 2, (screen_height - h) // 2
             font_size = 20
 
         popup.geometry(f"{w}x{h}+{x}+{y}")
-        label = tk.Label(popup, text=text, font=("Impact", font_size), fg="#FF0000", bg="#1A0000", wraplength=w-40, justify=tk.CENTER)
-        label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Texto Principal (A Rejeição gritada)
+        # Usei side=tk.TOP e expand=True para empurrar ele pro meio/topo
+        label = tk.Label(popup, text=text, font=("Impact", font_size), 
+                         fg="#FF0000", bg="#1A0000", wraplength=w-40, justify=tk.CENTER)
+        label.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(40, 20))
+        
+        # --- EGO ACTIVATION ---
+        if is_severe:
+            taunt_msg = ("Se estiver muito difícil... Exclua o programa.")
+            
+            # Fonte menor, itálico, cor cinza (fantasma)
+            lbl_taunt = tk.Label(popup, text=taunt_msg, font=("Segoe UI", 12, "italic"), 
+                                 fg="#555555", bg="#1A0000", justify=tk.CENTER)
+            lbl_taunt.pack(side=tk.BOTTOM, pady=(0, 40))
+
         popup.after(8000, popup.destroy)
         popup.update()
     except: pass
