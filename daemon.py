@@ -11,8 +11,10 @@ from core import (
     load_config_data, save_config_data, log_event, run_backup_system,
     set_system_volume, get_tasks_for_today, center_window,
     IS_WINDOWS, IS_MACOS, IS_LINUX, get_random_rejections,
-    verify_and_get_date, LOG_FILE # <--- Importando LOG_FILE do core
+    verify_and_get_date, SECURITY_LOG_FILE
 )
+
+LOG_FILE = SECURITY_LOG_FILE
 
 # --- GERENCIADOR DE ALERTA AMARELO ---
 class YellowAlertManager:
@@ -69,7 +71,7 @@ class YellowAlertManager:
             print(f"DESLIGAMENTO AGENDADO PARA: {datetime.fromtimestamp(self.shutdown_time)}")
             
         if time.time() > self.shutdown_time:
-            log_event("system_shutdown", f"Usuário ignorou horário fixo da tarefa: {self.active_task_name}")
+            log_event("system_shutdown", f"Usuário ignorou horário fixo da tarefa: {self.active_task_name}", category="security")
             if IS_WINDOWS:
                 os.system("shutdown /s /t 0")
             else:
@@ -113,7 +115,7 @@ class PsychologicalSession:
         
         def on_close():
             # Marca como revisado ao clicar no botão
-            log_event("SABOTAGE_REVIEWED", "Usuário recebeu revisão do DAEMON_DEAD.")
+            log_event("SABOTAGE_REVIEWED", "Usuário recebeu revisão do DAEMON_DEAD.", category="security")
             win.destroy()
 
         tk.Button(frame, text="ENTENDI", font=("Segoe UI", 10, "bold"),
@@ -211,7 +213,7 @@ class IdentityRejectionSystem:
                     self.config['consecutive_completion_days'] += 1
                 elif not all_tasks_completed_yesterday:
                     self.config['consecutive_completion_days'] = 0
-                    log_event("reset_frequencia", "Falha dia anterior.")
+                    log_event("reset_frequencia", "Falha dia anterior.", category="history")
 
             for task in self.tasks.values():
                 task['completed_on'] = None
@@ -246,7 +248,7 @@ class IdentityRejectionSystem:
             today_str = date.today().isoformat()
             if self.config.get('last_completion_date') != today_str:
                 self.config['last_completion_date'] = today_str
-                log_event("all_tasks_completed", "Todas as rotinas concluídas.")
+                log_event("all_tasks_completed", "Todas as rotinas concluídas.", category="history")
                 self.save_config()
             return True
         return False
@@ -342,7 +344,8 @@ class IdentityRejectionSystem:
         self.running = True
         self.rejection_thread = threading.Thread(target=self.run_rejection_loop, daemon=True)
         self.rejection_thread.start()
-        log_event("system_start", "Daemon iniciado.")
+        log_event("system_start", "Daemon iniciado.", category="security")
+        log_event("system_start", "Daemon iniciado.", category="system")
             
     def stop(self):
         self.running = False

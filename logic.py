@@ -8,19 +8,20 @@ from datetime import date
 
 try:
     from core import (
-        log_event, LOG_FILE, get_tasks_for_today, 
-        verify_and_get_date, load_config_data
+        log_event, SECURITY_LOG_FILE, get_tasks_for_today, 
+        verify_and_get_date
     )
 except ImportError:
-    def log_event(t, m): print(f"LOG [{t}]: {m}")
-    LOG_FILE = "config/logging.json"
+    # Fallback de segurança
+    def log_event(t, m, category="system"): print(f"LOG [{category}][{t}]: {m}")
+    SECURITY_LOG_FILE = "config/logs/security_log.json"
     def get_tasks_for_today(): return {}
     def verify_and_get_date(d): return d
-    def load_config_data(): return {}
 
 # Configuração
 SCRIPT_NAME = "identidade_rejeitada.py" 
 DAEMON_FLAG = "--daemon"
+LOG_FILE = SECURITY_LOG_FILE
 
 def get_daemon_path():
     try:
@@ -104,7 +105,7 @@ if __name__ == "__main__":
             # CENÁRIO: SABOTAGEM
             # O Daemon já tinha iniciado hoje, e agora sumiu. O usuário matou.
             try:
-                log_event("DAEMON_DEAD", "ALERTA: Daemon iniciado hoje mas processo sumiu (Sabotagem).")
+                log_event("DAEMON_DEAD", "ALERTA: Daemon iniciado hoje mas processo sumiu (Sabotagem).", category="security")
             except: pass
             resurrect_daemon()
             
@@ -112,7 +113,7 @@ if __name__ == "__main__":
             # CENÁRIO: BOOT / LOGIN
             # O Daemon ainda não registrou presença hoje. Provavelmente o PC acabou de ligar.
             # Apenas ressuscita (inicia) sem gerar log de morte.
-            log_event("WATCHDOG_SYSTEM", "Primeiro boot do dia ou delay de registro. Iniciando silenciosamente.")
+            log_event("WATCHDOG_SYSTEM", "Primeiro boot do dia ou delay de registro. Iniciando silenciosamente.", category="security")
             resurrect_daemon()
 
     # Se já estiver rodando, tudo ok.

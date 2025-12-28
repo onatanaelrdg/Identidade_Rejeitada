@@ -46,6 +46,19 @@ LOG_FILE = os.path.join(APP_DATA_DIR, "logging.json")
 PROOFS_DIR = os.path.join(APP_DATA_DIR, "provas")
 Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
 
+# Sistema de logs
+LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
+Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+FILES_MAP = {
+    "security": os.path.join(LOG_DIR, "security_log.json"),
+    "history": os.path.join(LOG_DIR, "history_log.json"),
+    "system": os.path.join(LOG_DIR, "system_trace.json")
+}
+
+SECURITY_LOG_FILE = FILES_MAP["security"]
+HISTORY_LOG_FILE = FILES_MAP["history"]
+
 # --- Funções de Backup e Log ---
 def run_backup_system():
     try:
@@ -86,30 +99,41 @@ def run_backup_system():
     except Exception as e:
         print(f"Erro backup: {e}")
 
-def log_event(event_type, details):
-    temp_file = f"{LOG_FILE}.tmp"
+def log_event(event_type, details, category="system"):
+    """
+    Categorias: 'security', 'history', 'system'.
+    Padrão: 'system'.
+    """
+    target_file = FILES_MAP.get(category, FILES_MAP["system"])
+    
+    # Prepara o registro
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "date": date.today().isoformat(),
+        "type": event_type,
+        "details": details
+    }
+
     try:
         logs = []
-        if os.path.exists(LOG_FILE):
-            with open(LOG_FILE, 'r', encoding='utf-8') as f:
+        if os.path.exists(target_file):
+            with open(target_file, 'r', encoding='utf-8') as f:
                 try: logs = json.load(f)
-                except: logs = []
+                except: logs = [] # Se corromper, inicia novo
         
-        logs.append({
-            "timestamp": datetime.now().isoformat(),
-            "date": date.today().isoformat(),
-            "type": event_type,
-            "details": details
-        })
-        
+        logs.append(entry)
+            
+        # Gravação segura
+        temp_file = f"{target_file}.tmp"
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_file, LOG_FILE)
-        run_backup_system()
+            f.flush(); os.fsync(f.fileno())
+        os.replace(temp_file, target_file)
+        
+        # Backup (continua rodando, mas agora pode fazer backup da pasta logs inteira)
+        run_backup_system() 
     except Exception as e:
-        print(f"Erro log: {e}")
+        print(f"Erro ao logar em {category}: {e}")
 
 # --- Funções de Configuração ---
 def load_config_data():

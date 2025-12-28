@@ -156,7 +156,7 @@ class App:
                 task['proof'] = pdata; task['proof_type'] = ptype
                 self.config_data['tasks'] = self.tasks
                 save_config_data(self.config_data)
-                log_event("task_completed", f"{task_id}: {task['name']}")
+                log_event("task_completed", f"{task_id}: {task['name']}", category="history")
                 self.update_task_list()
                 
                 # Verifica se TUDO foi concluído (agora checando hashes)
