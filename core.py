@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import time
 import shutil
 import hashlib
 import random
@@ -59,6 +60,37 @@ FILES_MAP = {
 
 SECURITY_LOG_FILE = FILES_MAP["security"]
 HISTORY_LOG_FILE = FILES_MAP["history"]
+
+class FileLock:
+    """
+    Garante que apenas um processo mexa no arquivo por vez.
+    Usa um arquivo .lock temporário.
+    """
+    def __init__(self, file_path, timeout=5):
+        self.lock_file = f"{file_path}.lock"
+        self.timeout = timeout
+        
+    def __enter__(self):
+        start_time = time.time()
+        while os.path.exists(self.lock_file):
+            # Se o arquivo de lock existe e é velho (> timeout), assume que o processo morreu e remove
+            if time.time() - start_time > self.timeout:
+                try: os.remove(self.lock_file)
+                except: pass
+                break
+            time.sleep(0.05) # Espera 50ms e tenta de novo
+            
+        # Cria o arquivo de lock
+        try:
+            with open(self.lock_file, 'w') as f: f.write("LOCKED")
+        except: pass # Concorrência extrema, vai tentar no próximo loop se falhar
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if os.path.exists(self.lock_file):
+                os.remove(self.lock_file)
+        except: pass
 
 # Gravação Atomica
 def atomic_write(target_file, data):
@@ -254,6 +286,22 @@ def verify_blockchain_integrity(category, scope="quick"):
         log_blockchain_status("AUDITOR_ERROR", str(e), category)
         return False
 
+def integrity_check(target_file, category="system"):
+    try:
+        with open(target_file, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+    except Exception as e:
+        # --- PROTEÇÃO CONTRA ZERAGEM ACIDENTAL ---
+        corrupted_path = f"{target_file}.CORRUPTED_{int(time.time())}"
+        try: os.rename(target_file, corrupted_path)
+        except: pass
+        logs = []
+        
+        # Avisa o auditor
+        log_blockchain_status("FILE_CORRUPTION", f"Arquivo corrompido renomeado para {os.path.basename(corrupted_path)}", category)
+    
+    return logs
+
 def log_event(event_type, details, category="system"):
     """
     Grava logs. Padrões: system, security, history.
@@ -272,46 +320,48 @@ def log_event(event_type, details, category="system"):
     timestamp_iso = now.isoformat()
     today_iso = date.today().isoformat()
     
-    # Leitura Inicial (IO)
-    logs = []
-    if os.path.exists(target_file):
-        with open(target_file, 'r', encoding='utf-8') as f:
-            try: logs = json.load(f)
-            except: logs = []
+    # Verificação completa com FileLock
+    with FileLock(target_file):
+        # Leitura Inicial (IO)
+        logs = []
+        if os.path.exists(target_file):
+            logs = integrity_check(target_file, category)
 
-    # --- GERAÇÃO DO REGISTRO ---
-    if category in ["security", "history"]:
-        # Pega o último registro para encadear (ou None se estiver vazio)
-        last_entry = logs[-1] if logs else None
-        
-        # Chama a função especialista
-        entry = create_blockchain_block(last_entry, event_type, details, timestamp_iso, today_iso)
-        
-    else:
-        entry = {
-            "timestamp": timestamp_iso,
-            "date": today_iso,
-            "type": event_type,
-            "details": details
-        }
+        # --- GERAÇÃO DO REGISTRO ---
+        if category in ["security", "history"]:
+            # Pega o último registro para encadear (ou None se estiver vazio)
+            last_entry = logs[-1] if logs else None
+            
+            # Chama a função especialista
+            entry = create_blockchain_block(last_entry, event_type, details, timestamp_iso, today_iso)
+            
+        else:
+            entry = {
+                "timestamp": timestamp_iso,
+                "date": today_iso,
+                "type": event_type,
+                "details": details
+            }
 
-    # --- PERSISTÊNCIA E BACKUP ---
-    try:
-        logs.append(entry)
-
-        # Gravação Atômica
-        atomic_write(target_file, logs)
-        
-        # Backup Cirúrgico
-        run_backup_system(arquivo_alterado=target_file)
-
-    except Exception as e:
+        # --- PERSISTÊNCIA ---
         try:
-            error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
-            with open(error_log_path, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type}\n")
-        except: pass
-        print(f"Erro ao logar em {category}: {e}")
+            logs.append(entry)
+
+            # Gravação Atômica
+            atomic_write(target_file, logs) 
+
+        except Exception as e:
+            try:
+                error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
+                with open(error_log_path, "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type}\n")
+            except: pass
+            print(f"Erro ao logar em {category}: {e}")
+
+    # --- BACKUP ---
+    try:
+        run_backup_system(arquivo_alterado=target_file)
+    except: pass
 
 # --- Funções de Configuração ---
 def load_config_data():
