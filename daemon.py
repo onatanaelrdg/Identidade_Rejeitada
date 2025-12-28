@@ -21,6 +21,7 @@ class FocusCheckSession:
     """Popup Bege Pastel: Iniciar ou Descansar?"""
     @staticmethod
     def show_check(root):
+        # FASE 1: REFLEXÃO
         win = tk.Toplevel(root)
         win.title("CHECKPOINT DE ENERGIA")
         
@@ -48,11 +49,15 @@ class FocusCheckSession:
         tk.Label(frame, text=msg, font=("Segoe UI", 16), 
                  bg=bg_color, fg=fg_color, justify=tk.CENTER).pack(pady=(0, 50))
         
-        # Ações
+        # Variável para rastrear a escolha do usuário
+        decision = {"proceed": False}
+        
         def on_start():
-            win.destroy() # Libera o Daemon para iniciar
+            decision["proceed"] = True
+            win.destroy() # Fecha o Bege para abrir o Verde depois
             
         def on_rest():
+            decision["proceed"] = False
             log_event("system_shutdown", "Usuário optou por descansar no Checkpoint.", category="security")
             if IS_WINDOWS:
                 os.system("shutdown /s /t 0")
@@ -76,6 +81,43 @@ class FocusCheckSession:
         # Trava tudo
         win.grab_set()
         root.wait_window(win)
+
+        # --- FASE 2: HYPE (VERDE) ---
+        # Só executa se o usuário escolheu iniciar
+        if decision["proceed"]:
+            FocusCheckSession.show_hype(root)
+
+    @staticmethod
+    def show_hype(root):
+        win_hype = tk.Toplevel(root)
+        win_hype.title("MODO DE AÇÃO")
+        
+        # Cores de Ação Pura
+        bg_action = "#4CAF50" # Verde Vibrante
+        fg_action = "#FFFFFF" # Branco
+        
+        win_hype.configure(bg=bg_action)
+        win_hype.attributes("-fullscreen", True)
+        win_hype.attributes("-topmost", True)
+        
+        frame = tk.Frame(win_hype, bg=bg_action)
+        frame.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Texto Gigante
+        tk.Label(frame, text="ENTÃO VAMOS NESSA 🚀", font=("Impact", 45), 
+                 bg=bg_action, fg=fg_action).pack(pady=(0, 40))
+        
+        def on_go():
+            win_hype.destroy() # Libera o Daemon
+            
+        # Botão BOOOOOORA (Branco para contraste máximo no fundo verde)
+        tk.Button(frame, text="BOOOOOORA!", font=("Segoe UI", 20, "bold"),
+                  bg="#FFFFFF", fg="#2E7D32", relief=tk.FLAT, 
+                  padx=50, pady=20, cursor="hand2",
+                  command=on_go).pack()
+                  
+        win_hype.grab_set()
+        root.wait_window(win_hype) # Trava aqui até o BOORA
 
 # --- GERENCIADOR DE ALERTA AMARELO ---
 class YellowAlertManager:
