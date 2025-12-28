@@ -27,8 +27,8 @@ class FocusCheckSession:
         # Cores Pastel (Bege Calmante)
         bg_color = "#F5F5DC" # Bege clássico
         fg_color = "#4A3B2F" # Marrom café suave (contraste legível)
-        btn_start_color = "#8FBC8F" # Verde pastel (DarkSeaGreen)
-        btn_rest_color = "#CD5C5C"  # Vermelho pastel (IndianRed)
+        btn_start_color = "#4CAF50" # (Verde Foco/Ação)
+        btn_rest_color = "#6495ED"  # (CornflowerBlue - Azul Suave
         
         win.configure(bg=bg_color)
         win.attributes("-fullscreen", True) # Tela Cheia
