@@ -59,10 +59,16 @@ FILES_MAP = {
 SECURITY_LOG_FILE = FILES_MAP["security"]
 HISTORY_LOG_FILE = FILES_MAP["history"]
 
-# --- Funções de Backup e Log ---
-def run_backup_system():
+# --- Sistema de backup ---
+def run_backup_system(arquivo_alterado=None):
+    """
+    Realiza o backup.
+    Se arquivo_alterado for fornecido, faz backup APENAS dele (modo rápido).
+    Se for None, faz backup de tudo e cria snapshot (modo boot).
+    """
     try:
         local_config_dir = get_app_data_dir()
+        
         if IS_WINDOWS:
             appdata_base = os.path.join(os.getenv('APPDATA'), APP_DIR_NAME, 'Backups')
         else:
@@ -72,32 +78,59 @@ def run_backup_system():
         daily_backup_dir = os.path.join(appdata_base, today_str)
         os.makedirs(daily_backup_dir, exist_ok=True)
 
-        # Snapshot
-        snapshot_dir = os.path.join(daily_backup_dir, "Start_of_Day_Snapshot")
-        if not os.path.exists(snapshot_dir) and os.path.exists(local_config_dir):
-            try: shutil.copytree(local_config_dir, snapshot_dir)
-            except: pass
+        # --- 1. SNAPSHOT (Apenas no Boot/Primeira execução) ---
+        # Se estamos rodando um backup cirúrgico (arquivo_alterado not None), 
+        # pulamos a verificação de snapshot para ganhar velocidade, 
+        # assumindo que o boot já cuidou disso.
+        if arquivo_alterado is None:
+            snapshot_dir = os.path.join(daily_backup_dir, "Start_of_Day_Snapshot")
+            if not os.path.exists(snapshot_dir) and os.path.exists(local_config_dir):
+                try: shutil.copytree(local_config_dir, snapshot_dir)
+                except: pass
 
-        # Rotação
-        for filename in ["config.json", "logging.json"]:
-            source_file = os.path.join(local_config_dir, filename)
-            if not os.path.exists(source_file): continue
+        # --- 2. ROTAÇÃO INTELIGENTE ---
+        files_to_rotate = []
+        
+        if arquivo_alterado:
+            # MODO CIRÚRGICO: O sistema avisou exatamente o que mudou
+            if os.path.exists(arquivo_alterado):
+                files_to_rotate.append(arquivo_alterado)
+        else:
+            # MODO COMPLETO (Boot): Varre tudo
+            if os.path.exists(CONFIG_FILE):
+                files_to_rotate.append(CONFIG_FILE)
             
+            if os.path.exists(LOG_DIR):
+                for f in os.listdir(LOG_DIR):
+                    if f.endswith(".json"):
+                        files_to_rotate.append(os.path.join(LOG_DIR, f))
+
+        # Executa a rotação apenas para os arquivos selecionados
+        for source_path in files_to_rotate:
+            if not os.path.exists(source_path): continue
+            
+            filename = os.path.basename(source_path)
             name_only, ext = os.path.splitext(filename)
+            
             path_recente = os.path.join(daily_backup_dir, f"{name_only}_recente{ext}")
             path_anterior = os.path.join(daily_backup_dir, f"{name_only}_anterior{ext}")
 
             try:
                 if os.path.exists(path_recente):
-                    if os.path.exists(path_anterior): os.remove(path_anterior)
-                    try: os.rename(path_recente, path_anterior)
+                    if os.path.exists(path_anterior): 
+                        os.remove(path_anterior)
+                    try: 
+                        os.rename(path_recente, path_anterior)
                     except: 
+                        # Fallback para Windows (arquivo em uso)
                         shutil.copy2(path_recente, path_anterior)
                         os.remove(path_recente)
-                shutil.copy2(source_file, path_recente)
+                
+                shutil.copy2(source_path, path_recente)
             except: pass
+                
     except Exception as e:
-        print(f"Erro backup: {e}")
+        log_event("system_error", f"Erro backup: {e}", category="system")
 
 def log_event(event_type, details, category="system"):
     """
@@ -130,9 +163,14 @@ def log_event(event_type, details, category="system"):
             f.flush(); os.fsync(f.fileno())
         os.replace(temp_file, target_file)
         
-        # Backup (continua rodando, mas agora pode fazer backup da pasta logs inteira)
-        run_backup_system() 
+        # Backup
+        run_backup_system(arquivo_alterado=target_file)
+
     except Exception as e:
+        error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
+        with open(error_log_path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type} | CAT: {category} | DETAILS: {details}\n")
+
         print(f"Erro ao logar em {category}: {e}")
 
 # --- Funções de Configuração ---
@@ -187,9 +225,9 @@ def save_config_data(data):
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_file, CONFIG_FILE)
-        run_backup_system()
+        run_backup_system(arquivo_alterado=CONFIG_FILE)
     except Exception as e:
-        print(f"Erro save config: {e}")
+        log_event("system_error", f"Erro save config: {e}", category="system")
 
 def get_tasks_for_today():
     config = load_config_data()
@@ -215,7 +253,7 @@ def set_system_volume(level_percent):
             log_event("volume_set", f"{level_percent}%")
         except: pass
     elif not IS_WINDOWS:
-        print("Volume control only implemented for Windows nircmd so far.")
+        log_event("system_error", "Volume control only implemented for Windows nircmd so far.", category="system")
 
 def center_window(win, width, height):
     screen_width = win.winfo_screenwidth()
