@@ -132,58 +132,69 @@ def run_backup_system(arquivo_alterado=None):
     except Exception as e:
         log_event("system_error", f"Erro backup: {e}", category="system")
 
+def create_blockchain_block(last_entry, event_type, details, timestamp_iso, today_iso):
+    """
+    Gera um dicionário (bloco) com assinatura criptográfica baseada no bloco anterior.
+    """
+    
+    if last_entry:
+        prev_hash = last_entry.get('hash', 'GENESIS_MIGRATION_HASH')
+    else:
+        prev_hash = str(0 * 64)
+        
+    details_str = str(details)
+    payload = f"{timestamp_iso}{event_type}{details_str}{prev_hash}{SECRET_SALT}".encode('utf-8')
+    
+    current_hash = hashlib.sha256(payload).hexdigest()
+    
+    return {
+        "timestamp": timestamp_iso,
+        "date": today_iso,
+        "type": event_type,
+        "details": details,
+        "previous_hash": prev_hash,
+        "hash": current_hash
+    }
+
 def log_event(event_type, details, category="system"):
     """
-    Categorias: 'security', 'history', 'system'.
-    Padrão: 'system'.
-    
-    Blindagem criptográfica (Security/History):
+    Grava logs. Padrões: system, security, history.
+    Se category for 'security' ou 'history', usa a função auxiliar de Blockchain.
     """
     target_file = FILES_MAP.get(category, FILES_MAP["system"])
     
-    # Captura o momento exato (Base da cadeia de custódia)
     now = datetime.now()
     timestamp_iso = now.isoformat()
     today_iso = date.today().isoformat()
     
-    # --- LÓGICA DE HASHING ---
+    # Leitura Inicial (IO)
+    logs = []
+    if os.path.exists(target_file):
+        with open(target_file, 'r', encoding='utf-8') as f:
+            try: logs = json.load(f)
+            except: logs = []
+
+    # --- GERAÇÃO DO REGISTRO ---
     if category in ["security", "history"]:
-        date_payload = f"{today_iso}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
-        date_hash = hashlib.sha256(date_payload).hexdigest()
-        signed_date = f"{today_iso}|{date_hash}"
+        # Pega o último registro para encadear (ou None se estiver vazio)
+        last_entry = logs[-1] if logs else None
         
-        type_payload = f"{event_type}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
-        type_hash = hashlib.sha256(type_payload).hexdigest()
-        signed_type = f"{event_type}|{type_hash}"
-        
-        det_str = str(details)
-        details_payload = f"{event_type}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
-        details_hash = hashlib.sha256(details_payload).hexdigest()
-        signed_details = f"{det_str}|{details_hash}"
+        # Chama a função especialista
+        entry = create_blockchain_block(last_entry, event_type, details, timestamp_iso, today_iso)
         
     else:
-        signed_date = today_iso
-        signed_type = event_type
-        signed_details = details
+        entry = {
+            "timestamp": timestamp_iso,
+            "date": today_iso,
+            "type": event_type,
+            "details": details
+        }
 
-    # Prepara o registro
-    entry = {
-        "timestamp": timestamp_iso,
-        "date": signed_date,
-        "type": signed_type,
-        "details": signed_details
-    }
-
+    # --- PERSISTÊNCIA E BACKUP ---
     try:
-        logs = []
-        if os.path.exists(target_file):
-            with open(target_file, 'r', encoding='utf-8') as f:
-                try: logs = json.load(f)
-                except: logs = [] # Se corromper, inicia novo
-        
         logs.append(entry)
 
-        # Gravação segura
+        # Gravação Atômica
         temp_file = f"{target_file}.tmp"
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(logs, f, ensure_ascii=False, indent=2)
@@ -194,11 +205,10 @@ def log_event(event_type, details, category="system"):
         run_backup_system(arquivo_alterado=target_file)
 
     except Exception as e:
-        # Log de erro de emergência (separado para não causar loop)
         try:
             error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
             with open(error_log_path, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type} | CAT: {category}\n")
+                f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type}\n")
         except: pass
         print(f"Erro ao logar em {category}: {e}")
 
