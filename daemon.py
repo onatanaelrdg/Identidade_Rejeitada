@@ -16,6 +16,67 @@ from core import (
 
 LOG_FILE = SECURITY_LOG_FILE
 
+# --- CHECKPOINT DE CONSCIÊNCIA ---
+class FocusCheckSession:
+    """Popup Bege Pastel: Iniciar ou Descansar?"""
+    @staticmethod
+    def show_check(root):
+        win = tk.Toplevel(root)
+        win.title("CHECKPOINT DE ENERGIA")
+        
+        # Cores Pastel (Bege Calmante)
+        bg_color = "#F5F5DC" # Bege clássico
+        fg_color = "#4A3B2F" # Marrom café suave (contraste legível)
+        btn_start_color = "#8FBC8F" # Verde pastel (DarkSeaGreen)
+        btn_rest_color = "#CD5C5C"  # Vermelho pastel (IndianRed)
+        
+        win.configure(bg=bg_color)
+        win.attributes("-fullscreen", True) # Tela Cheia
+        win.attributes("-topmost", True)
+        
+        # Frame Centralizado
+        frame = tk.Frame(win, bg=bg_color)
+        frame.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Texto
+        tk.Label(frame, text="CÓRTEX PRÉ-FRONTAL", font=("Segoe UI", 24, "bold"), 
+                 bg=bg_color, fg=fg_color).pack(pady=(0, 30))
+        
+        msg = ("Caso esteja cansado, de verdade, descanse longe do computador e celular.\n"
+               "Depois volte aqui.")
+        
+        tk.Label(frame, text=msg, font=("Segoe UI", 16), 
+                 bg=bg_color, fg=fg_color, justify=tk.CENTER).pack(pady=(0, 50))
+        
+        # Ações
+        def on_start():
+            win.destroy() # Libera o Daemon para iniciar
+            
+        def on_rest():
+            log_event("system_shutdown", "Usuário optou por descansar no Checkpoint.", category="security")
+            if IS_WINDOWS:
+                os.system("shutdown /s /t 0")
+            else:
+                os.system("shutdown -h now")
+            win.destroy() 
+
+        btn_frame = tk.Frame(frame, bg=bg_color)
+        btn_frame.pack()
+
+        # Botão Iniciar
+        tk.Button(btn_frame, text="ESTOU PRONTO PARA INICIAR", font=("Segoe UI", 14, "bold"),
+                  bg=btn_start_color, fg="white", relief=tk.FLAT, padx=30, pady=15, cursor="hand2",
+                  command=on_start).pack(side=tk.LEFT, padx=20)
+                  
+        # Botão Descansar
+        tk.Button(btn_frame, text="DESCANSAR AGORA", font=("Segoe UI", 14, "bold"),
+                  bg=btn_rest_color, fg="white", relief=tk.FLAT, padx=30, pady=15, cursor="hand2",
+                  command=on_rest).pack(side=tk.LEFT, padx=20)
+        
+        # Trava tudo
+        win.grab_set()
+        root.wait_window(win)
+
 # --- GERENCIADOR DE ALERTA AMARELO ---
 class YellowAlertManager:
     """Gerencia a janela amarela e o desligamento."""
@@ -185,6 +246,30 @@ class IdentityRejectionSystem:
         except Exception as e:
             print(f"Erro ao checar sabotagem: {e}")
 
+    def check_initial_focus_popup(self):
+        """Exibe o popup de descanso se for a primeira vez rodando hoje."""
+        try:
+            # 1. Se já completou tudo, não perturba
+            if self.all_tasks_completed(): return
+
+            # 2. Verifica se o Daemon já rodou hoje (evita popup em restart do watchdog)
+            already_started_today = False
+            if os.path.exists(SECURITY_LOG_FILE):
+                today_str = date.today().isoformat()
+                with open(SECURITY_LOG_FILE, 'r', encoding='utf-8') as f:
+                    logs = json.load(f)
+                    for entry in logs:
+                        if entry.get('date') == today_str and entry.get('type') == 'system_start':
+                            already_started_today = True
+                            break
+            
+            # Se NÃO rodou hoje ainda (started = False) -> Mostra o Popup
+            if not already_started_today:
+                FocusCheckSession.show_check(self.yellow_manager.root)
+                
+        except Exception as e:
+            log_event("focus_popup_error", f"Erro ao mostrar popup de descanso: {e}", category="system")
+
     def reload_config(self):
         self.config = load_config_data()
         self.tasks = self.config.get('tasks', {})
@@ -341,6 +426,8 @@ class IdentityRejectionSystem:
                 time.sleep(60)
 
     def start(self):
+        self.check_initial_focus_popup()
+
         self.running = True
         self.rejection_thread = threading.Thread(target=self.run_rejection_loop, daemon=True)
         self.rejection_thread.start()
