@@ -11,7 +11,7 @@ from core import (
     load_config_data, save_config_data, log_event, run_backup_system,
     set_system_volume, get_tasks_for_today, center_window,
     IS_WINDOWS, IS_MACOS, IS_LINUX, get_random_rejections,
-    verify_and_get_date, SECURITY_LOG_FILE
+    verify_and_get_date, SECURITY_LOG_FILE, verify_blockchain_integrity
 )
 
 LOG_FILE = SECURITY_LOG_FILE
@@ -472,11 +472,18 @@ class IdentityRejectionSystem:
                 time.sleep(60)
 
     def start(self):
+        # 1. Auditoria de blockchain
+        verify_blockchain_integrity("security", scope="full")
+        verify_blockchain_integrity("history", scope="full")
+
+        # 2. Checkpoint de Consciência
         self.check_initial_focus_popup()
 
+        # 3. Inicia o loop de rejeição
         self.running = True
         self.rejection_thread = threading.Thread(target=self.run_rejection_loop, daemon=True)
         self.rejection_thread.start()
+        
         log_event("system_start", "Daemon iniciado.", category="security")
         log_event("system_start", "Daemon iniciado.", category="system")
             

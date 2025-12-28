@@ -53,11 +53,21 @@ Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
 FILES_MAP = {
     "security": os.path.join(LOG_DIR, "security_log.json"),
     "history": os.path.join(LOG_DIR, "history_log.json"),
+    "blockchain": os.path.join(LOG_DIR, "blockchain_log.json"),
     "system": os.path.join(LOG_DIR, "system_trace.json")
 }
 
 SECURITY_LOG_FILE = FILES_MAP["security"]
 HISTORY_LOG_FILE = FILES_MAP["history"]
+
+# Gravação Atomica
+def atomic_write(target_file, data):
+    temp_file = f"{target_file}.tmp"
+    with open(temp_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(temp_file, target_file)
+    
 
 # --- Sistema de backup ---
 def run_backup_system(arquivo_alterado=None):
@@ -140,7 +150,7 @@ def create_blockchain_block(last_entry, event_type, details, timestamp_iso, toda
     if last_entry:
         prev_hash = last_entry.get('hash', 'GENESIS_MIGRATION_HASH')
     else:
-        prev_hash = str(0 * 64)
+        prev_hash = "0" * 64
         
     details_str = str(details)
     payload = f"{timestamp_iso}{event_type}{details_str}{prev_hash}{SECRET_SALT}".encode('utf-8')
@@ -156,12 +166,107 @@ def create_blockchain_block(last_entry, event_type, details, timestamp_iso, toda
         "hash": current_hash
     }
 
+def log_blockchain_status(status_type, msg, target_category):
+    """
+    Grava exclusivamente no blockchain_log.json.
+    Ex: INTEGRITY_SUCCESS, INTEGRITY_FAILURE, CHECK_SKIPPED
+    """
+    try:
+        fpath = FILES_MAP["blockchain"]
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "target_log": target_category,
+            "status": status_type,
+            "message": msg
+        }
+        
+        logs = []
+        if os.path.exists(fpath):
+            with open(fpath, 'r', encoding='utf-8') as f:
+                try: logs = json.load(f)
+                except: logs = []
+        
+        logs.append(entry)
+        
+        atomic_write(fpath, logs)
+            
+    except Exception as e:
+        print(f"Erro no auditor blockchain: {e}")
+
+def verify_blockchain_integrity(category, scope="quick"):
+    """
+    Verifica se a corrente de hash está intacta.
+    scope="full": Verifica do zero (usado no boot do Daemon).
+    scope="quick": Verifica os últimos 5 blocos (usado no log_event).
+    Retorna True (Íntegro) ou False (Corrompido).
+    """
+    target_file = FILES_MAP.get(category)
+    if not target_file or not os.path.exists(target_file):
+        return True 
+        
+    try:
+        with open(target_file, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+            
+        if not logs: return True
+        
+        total_len = len(logs)
+        start_index = 0
+        
+        if scope == "quick":
+            start_index = max(0, total_len - 5)
+            
+        for i in range(start_index, total_len):
+            current_block = logs[i]
+            
+            if i == 0:
+                expected_prev_hash = "0" * 64
+            else:
+                expected_prev_hash = logs[i-1].get('hash', '')
+            
+            actual_prev_hash_in_block = current_block.get('previous_hash', '')
+            
+            if actual_prev_hash_in_block != expected_prev_hash:
+                msg = f"QUEBRA DE CORRENTE no índice {i}. PrevHash esperado: {expected_prev_hash[:10]}... Encontrado: {actual_prev_hash_in_block[:10]}..."
+                log_blockchain_status("INTEGRITY_FAILURE", msg, category)
+                return False
+
+            ts = current_block.get('timestamp', '')
+            typ = current_block.get('type', '')
+            det = str(current_block.get('details', ''))
+            
+            payload = f"{ts}{typ}{det}{actual_prev_hash_in_block}{SECRET_SALT}".encode('utf-8')
+            recalculated_hash = hashlib.sha256(payload).hexdigest()
+            
+            stored_hash = current_block.get('hash', '')
+            
+            if recalculated_hash != stored_hash:
+                msg = f"ADULTERAÇÃO DE CONTEÚDO no índice {i}. Hash gravado não bate com o conteúdo."
+                log_blockchain_status("TAMPERING_DETECTED", msg, category)
+                return False
+        
+        if scope == "full":
+            log_blockchain_status("INTEGRITY_SUCCESS", f"Verificação completa OK ({total_len} blocos).", category)
+            
+        return True
+
+    except Exception as e:
+        log_blockchain_status("AUDITOR_ERROR", str(e), category)
+        return False
+
 def log_event(event_type, details, category="system"):
     """
     Grava logs. Padrões: system, security, history.
     Se category for 'security' ou 'history', usa a função auxiliar de Blockchain.
     """
     target_file = FILES_MAP.get(category, FILES_MAP["system"])
+
+    # --- Verificação de blocos ---
+    if category in ["security", "history"]:
+        is_valid = verify_blockchain_integrity(category, scope="quick")
+        if not is_valid:
+            log_event(f"ALERTA CRÍTICO: {category} log está corrompido! Verifique blockchain_log.json", category="security")
+    # -------------------------------------
     
     now = datetime.now()
     timestamp_iso = now.isoformat()
@@ -195,11 +300,7 @@ def log_event(event_type, details, category="system"):
         logs.append(entry)
 
         # Gravação Atômica
-        temp_file = f"{target_file}.tmp"
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(logs, f, ensure_ascii=False, indent=2)
-            f.flush(); os.fsync(f.fileno())
-        os.replace(temp_file, target_file)
+        atomic_write(target_file, logs)
         
         # Backup Cirúrgico
         run_backup_system(arquivo_alterado=target_file)
@@ -257,13 +358,8 @@ def load_config_data():
     return config
 
 def save_config_data(data):
-    temp_file = f"{CONFIG_FILE}.tmp"
     try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_file, CONFIG_FILE)
+        atomic_write(CONFIG_FILE, data)
         run_backup_system(arquivo_alterado=CONFIG_FILE)
     except Exception as e:
         log_event("system_error", f"Erro save config: {e}", category="system")
