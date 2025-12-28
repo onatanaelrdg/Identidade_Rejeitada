@@ -136,15 +136,42 @@ def log_event(event_type, details, category="system"):
     """
     Categorias: 'security', 'history', 'system'.
     Padrão: 'system'.
+    
+    Blindagem criptográfica (Security/History):
     """
     target_file = FILES_MAP.get(category, FILES_MAP["system"])
     
+    # Captura o momento exato (Base da cadeia de custódia)
+    now = datetime.now()
+    timestamp_iso = now.isoformat()
+    today_iso = date.today().isoformat()
+    
+    # --- LÓGICA DE HASHING ---
+    if category in ["security", "history"]:
+        date_payload = f"{today_iso}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
+        date_hash = hashlib.sha256(date_payload).hexdigest()
+        signed_date = f"{today_iso}|{date_hash}"
+        
+        type_payload = f"{event_type}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
+        type_hash = hashlib.sha256(type_payload).hexdigest()
+        signed_type = f"{event_type}|{type_hash}"
+        
+        det_str = str(details)
+        details_payload = f"{event_type}{timestamp_iso}{SECRET_SALT}".encode('utf-8')
+        details_hash = hashlib.sha256(details_payload).hexdigest()
+        signed_details = f"{det_str}|{details_hash}"
+        
+    else:
+        signed_date = today_iso
+        signed_type = event_type
+        signed_details = details
+
     # Prepara o registro
     entry = {
-        "timestamp": datetime.now().isoformat(),
-        "date": date.today().isoformat(),
-        "type": event_type,
-        "details": details
+        "timestamp": timestamp_iso,
+        "date": signed_date,
+        "type": signed_type,
+        "details": signed_details
     }
 
     try:
@@ -155,7 +182,7 @@ def log_event(event_type, details, category="system"):
                 except: logs = [] # Se corromper, inicia novo
         
         logs.append(entry)
-            
+
         # Gravação segura
         temp_file = f"{target_file}.tmp"
         with open(temp_file, 'w', encoding='utf-8') as f:
@@ -163,14 +190,16 @@ def log_event(event_type, details, category="system"):
             f.flush(); os.fsync(f.fileno())
         os.replace(temp_file, target_file)
         
-        # Backup
+        # Backup Cirúrgico
         run_backup_system(arquivo_alterado=target_file)
 
     except Exception as e:
-        error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
-        with open(error_log_path, "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type} | CAT: {category} | DETAILS: {details}\n")
-
+        # Log de erro de emergência (separado para não causar loop)
+        try:
+            error_log_path = os.path.join(LOG_DIR, "error_log_event.json")
+            with open(error_log_path, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now().isoformat()} | ERROR: {e} | TYPE: {event_type} | CAT: {category}\n")
+        except: pass
         print(f"Erro ao logar em {category}: {e}")
 
 # --- Funções de Configuração ---
