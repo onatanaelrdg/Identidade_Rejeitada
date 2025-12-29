@@ -394,6 +394,8 @@ def log_event(event_type, details, category="system"):
     except: pass
 
 # --- Funções de Configuração ---
+# No core.py
+
 def load_config_data():
     default_config = {
         'rejections': [
@@ -414,15 +416,35 @@ def load_config_data():
         'tts_speed': 3,
         'consecutive_completion_days': 0,
         'last_completion_date': None,
-        'study_mode': False
+        'study_mode': False,
+        # --- ECONOMIA DA DISCIPLINA ---
+        'economy': {
+            'flex_credits': [],       # Lista de objetos {earned_date, expires_at}
+            'free_passes': 0,         # Inteiro
+            'streak_progress': 0,     # 0 a 10
+            'last_month_reset': None, # YYYY-MM
+            'pending_trade': False,   # Gatilho do 5º crédito
+            'flex_active_date': None  # Data em que o Flex foi ativado (YYYY-MM-DD)
+        }
     }
+    
     config = default_config
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            for key, value in default_config.items():
-                if key not in config: config[key] = value
+                loaded = json.load(f)
+                # Merge recursivo simples
+                for k, v in default_config.items():
+                    if k not in loaded: loaded[k] = v
+                
+                # Garante que a chave economy exista e tenha todos os campos
+                if 'economy' not in loaded:
+                    loaded['economy'] = default_config['economy']
+                else:
+                    for ek, ev in default_config['economy'].items():
+                        if ek not in loaded['economy']: loaded['economy'][ek] = ev
+                        
+                config = loaded
         except: config = default_config
     
     # Migração simples de tasks antigas

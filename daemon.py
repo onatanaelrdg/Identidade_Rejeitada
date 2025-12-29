@@ -328,6 +328,9 @@ class IdentityRejectionSystem:
         today_str = date.today().isoformat()
         last_completion = self.config.get('last_completion_date')
         
+        # Roda a manutenção econômica primeiro
+        self.process_economy_daily_check()
+        
         if last_completion != today_str:
             all_tasks_completed_yesterday = True
             if not self.tasks: all_tasks_completed_yesterday = False
@@ -340,11 +343,44 @@ class IdentityRejectionSystem:
             
             if last_completion:
                 yesterday = (date.today() - timedelta(days=1)).isoformat()
+                
+                # --- LÓGICA DE MÉRITO ECONÔMICO ---
+                econ = self.config.get('economy', {})
+                was_flex_day = (econ.get('flex_active_date') == last_completion)
+
                 if last_completion == yesterday and all_tasks_completed_yesterday:
                     self.config['consecutive_completion_days'] += 1
+                    
+                    # Só ganha ponto no streak se NÃO usou flex
+                    if not was_flex_day:
+                        econ['streak_progress'] = econ.get('streak_progress', 0) + 1
+                        
+                        # Bateu 10 dias?
+                        if econ['streak_progress'] >= 10:
+                            econ['streak_progress'] = 0 # Reseta ciclo
+                            
+                            # Verifica espaço no inventário (Max 4)
+                            if len(econ['flex_credits']) < 4:
+                                # Ganha Crédito
+                                expire_date = (date.today() + timedelta(days=90)).isoformat()
+                                econ['flex_credits'].append({
+                                    "earned_date": today_str,
+                                    "expires_at": expire_date
+                                })
+                                log_event("CREDIT_EARNED", "Mérito: 10 dias perfeitos.", category="history")
+                            else:
+                                # Trigger do Passe Livre (Inventário cheio)
+                                econ['pending_trade'] = True
+                                log_event("TRADE_TRIGGER", "Inventário cheio. Troca desbloqueada.", category="history")
+                    
                 elif not all_tasks_completed_yesterday:
+                    # Quebrou streak
                     self.config['consecutive_completion_days'] = 0
+                    econ['streak_progress'] = 0 # Zera progresso do mérito também
                     log_event("reset_frequencia", "Falha dia anterior.", category="history")
+                
+                self.config['economy'] = econ
+                # ----------------------------------
 
             for task in self.tasks.values():
                 task['completed_on'] = None
@@ -490,6 +526,51 @@ class IdentityRejectionSystem:
     def stop(self):
         self.running = False
         if self.rejection_thread: self.rejection_thread.join(timeout=2)
+
+    def process_economy_daily_check(self):
+        """Gerencia expiração, recarga mensal e limpeza."""
+        econ = self.config.get('economy', {})
+        today = date.today()
+        today_str = today.isoformat()
+        current_month = today.strftime("%Y-%m")
+        changed = False
+
+        # 1. Limpeza de Créditos Expirados
+        valid_credits = []
+        for c in econ.get('flex_credits', []):
+            if c['expires_at'] >= today_str:
+                valid_credits.append(c)
+            else:
+                log_event("CREDIT_EXPIRED", f"Crédito vencido em {c['expires_at']}", category="history")
+                changed = True
+        econ['flex_credits'] = valid_credits
+
+        # 2. Recarga Mensal (Dia 1 ou primeiro boot do mês)
+        if econ.get('last_month_reset') != current_month:
+            # Lógica: Se tem < 2, completa até 2. Se tem >= 2, não dá nada.
+            current_count = len(econ['flex_credits'])
+            to_add = 0
+            
+            if current_count < 2:
+                to_add = 2 - current_count
+            
+            if to_add > 0:
+                # Validade de 90 dias
+                expire_date = (today + timedelta(days=90)).isoformat()
+                for _ in range(to_add):
+                    econ['flex_credits'].append({
+                        "earned_date": today_str,
+                        "expires_at": expire_date
+                    })
+                log_event("MONTHLY_REFILL", f"Recarga mensal: +{to_add} créditos.", category="history")
+                # Exibe notificação visual (opcional, pode ser via popup se quiser)
+            
+            econ['last_month_reset'] = current_month
+            changed = True
+
+        if changed:
+            self.config['economy'] = econ
+            self.save_config()
 
 # --- SISTEMA DE POPUPS ---
 

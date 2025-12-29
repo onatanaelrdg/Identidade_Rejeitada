@@ -178,104 +178,124 @@ class App:
             else: var.set(False)
 
     def get_proof(self, task):
-        """Janela de prova com validação rígida de tempo."""
+        """Janela de prova com validação de Tempo, Flex e Passe Livre."""
         task_name = task.get('name', 'Tarefa')
-        min_val = task.get('min_time_val', '')
-        min_unit = task.get('min_time_unit', 'minutos')
         
-        # Monta a string de validação (Ex: "30 minutos" ou "4 horas")
-        validation_str = f"{min_val} {min_unit}" if min_val else None
+        # --- LÓGICA FLEX ---
+        cfg = load_config_data()
+        econ = cfg.get('economy', {})
+        is_flex_day = (econ.get('flex_active_date') == date.today().isoformat())
+        
+        raw_min_val = task.get('min_time_val', '')
+        raw_min_unit = task.get('min_time_unit', 'minutos')
+        
+        validation_str = None
+        is_time_check_required = False
+        
+        if raw_min_val:
+            is_time_check_required = True
+            if is_flex_day:
+                # Se for dia Flex, o alvo vira "15 minutos"
+                # (A menos que a tarefa fosse menor que 15, mas assumimos que disciplina é > 15)
+                validation_str = "15 minutos"
+            else:
+                validation_str = f"{raw_min_val} {raw_min_unit}"
 
         win = tk.Toplevel(self.root)
         win.title(f"Prova: {task_name}")
-        center_window(win, 450, 400) # Aumentei um pouco a altura
+        center_window(win, 450, 450)
         win.transient(self.root)
         win.grab_set()
         
-        # Container principal
         frame = ttk.Frame(win, padding=15)
         frame.pack(fill=tk.BOTH, expand=True)
 
+        if is_flex_day:
+            tk.Label(frame, text="⚡ MODO FLEX ATIVO: Tempo reduzido.", fg="#00CCFF", bg="#2E2E2E").pack(fill=tk.X)
+
         # --- SEÇÃO DE VALIDAÇÃO DE TEMPO ---
         time_entry = None
-        
-        if validation_str:
-            # Container visual para a validação
-            val_frame = tk.LabelFrame(frame, text="Verificação de Tempo", padx=10, pady=10, bg="#2E2E2E", fg="#E0E0E0")
+        if is_time_check_required:
+            val_frame = tk.LabelFrame(frame, text="Verificação de Tempo", padx=10, pady=10)
             val_frame.pack(fill=tk.X, pady=(0, 15))
             
-            # Label com o alvo
-            ttk.Label(val_frame, text=f"Tempo Mínimo Exigido: {validation_str}", 
-                      font=("Segoe UI", 10, "bold"), foreground="#FFCC00", background="#2E2E2E").pack(anchor=tk.W)
+            ttk.Label(val_frame, text=f"Tempo Exigido: {validation_str}", font=("Segoe UI", 10, "bold"), foreground="#FFCC00").pack(anchor=tk.W)
             
-            # Input do usuário
-            row = tk.Frame(val_frame, bg="#2E2E2E")
+            row = tk.Frame(val_frame)
             row.pack(fill=tk.X, pady=(5, 0))
-            
-            ttk.Label(row, text="Tempo trabalhado:", background="#2E2E2E", foreground="#FFFFFF").pack(side=tk.LEFT, padx=(0, 5))
-            
+            ttk.Label(row, text="Tempo realizado:").pack(side=tk.LEFT)
             time_entry = ttk.Entry(row)
             time_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            ttk.Label(val_frame, text=f"(Digite exatamente: '{validation_str}')", 
-                      font=("Segoe UI", 8), foreground="#888888", background="#2E2E2E").pack(anchor=tk.W)
+            ttk.Label(val_frame, text="(Digite 'Passe Livre' para usar um passe)", font=("Segoe UI", 8, "italic")).pack(anchor=tk.W)
 
-        # --- SEÇÃO DE PROVA (TEXTO/IMAGEM) ---
-        ttk.Label(frame, text="Descreva o que foi feito ou anexe prova:").pack(anchor=tk.W, pady=(0, 5))
-        
+        # --- SEÇÃO DE PROVA ---
+        ttk.Label(frame, text="Descreva o que foi feito:").pack(anchor=tk.W)
         entry = tk.Text(frame, height=8, width=50)
         entry.pack(pady=5, fill=tk.BOTH, expand=True)
         
         res = {"t": None, "d": None}
         
-        def check_time_validation():
-            """Retorna True se passou na validação ou se não há validação."""
-            if not validation_str:
-                return True
-                
+        def check_validation():
+            if not is_time_check_required: return True
+            
             user_input = time_entry.get().strip()
             
-            # Validação EXATA (String match)
+            # --- CHEQUE DE PASSE LIVRE ---
+            if user_input.lower() == "passe livre":
+                passes = econ.get('free_passes', 0)
+                if passes > 0:
+                    if messagebox.askyesno("Usar Passe", f"Você tem {passes} passes.\nDeseja gastar 1 para pular esta tarefa?"):
+                        econ['free_passes'] -= 1
+                        cfg['economy'] = econ
+                        save_config_data(cfg)
+                        log_event("PASS_USED", f"Usou passe na tarefa: {task_name}", category="history")
+                        return "PASS" # Código especial
+                else:
+                    messagebox.showerror("Impostor", "Você não tem Passes Livres.")
+                    return False
+
+            # Validação Normal
             if user_input != validation_str:
-                messagebox.showerror("Integridade Falhou", 
-                                     f"Você definiu um mínimo de '{validation_str}'.\n"
-                                     f"Você digitou '{user_input}'.\n\n"
-                                     "Se você fez menos, não marque como concluído.\n"
-                                     "Se fez o tempo certo, digite exatamente igual.",
-                                     parent=win)
+                messagebox.showerror("Falha", f"Você deve digitar exatamente: '{validation_str}'")
                 return False
             return True
 
         def save_txt():
-            if not check_time_validation(): return
+            valid = check_validation()
+            if not valid: return
             
+            # Se usou passe, o texto pode ser vazio
             d = entry.get("1.0", tk.END).strip()
-            if d: 
-                res["t"] = "text"
-                res["d"] = d
+            if valid == "PASS":
+                d = "CONCLUÍDO COM PASSE LIVRE 🎫"
+            
+            if d:
+                res["t"] = "text"; res["d"] = d
                 win.destroy()
             else:
-                messagebox.showwarning("Prova Vazia", "Escreva algo sobre a tarefa.", parent=win)
+                messagebox.showwarning("Vazio", "Escreva algo.")
 
         def save_img():
-            if not check_time_validation(): return
+            valid = check_validation()
+            if not valid: return
+            if valid == "PASS":
+                messagebox.showinfo("Info", "Passe Livre não requer imagem. Salvando como texto.")
+                res["t"] = "text"; res["d"] = "CONCLUÍDO COM PASSE LIVRE 🎫"
+                win.destroy()
+                return
 
-            fp = filedialog.askopenfilename(filetypes=[("Imagens", "*.png *.jpg *.jpeg")])
+            fp = filedialog.askopenfilename(filetypes=[("Imagens", "*.png *.jpg")])
             if fp:
                 try:
                     np = os.path.join(PROOFS_DIR, f"proof_{date.today()}_{os.path.basename(fp)}")
                     shutil.copy(fp, np)
-                    res["t"] = "image"
-                    res["d"] = np
+                    res["t"] = "image"; res["d"] = np
                     win.destroy()
-                except Exception as e:
-                    messagebox.showerror("Erro", f"Erro ao salvar imagem: {e}")
+                except: pass
 
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(pady=10, fill=tk.X)
-        
-        ttk.Button(btn_frame, text="Salvar Texto", command=save_txt).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
-        ttk.Button(btn_frame, text="Anexar Imagem", command=save_img).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        btn_frame = ttk.Frame(frame); btn_frame.pack(pady=10, fill=tk.X)
+        ttk.Button(btn_frame, text="Salvar", command=save_txt).pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Button(btn_frame, text="Anexar Imagem", command=save_img).pack(side=tk.LEFT, expand=True, fill=tk.X)
         
         self.root.wait_window(win)
         return res["t"], res["d"]
@@ -285,10 +305,119 @@ class App:
         win.transient(self.root); win.grab_set()
         f = ttk.Frame(win, padding="15"); f.pack(fill=tk.BOTH, expand=True)
         ttk.Button(f, text="Gerenciar Tarefas", command=self.open_task_manager).pack(fill=tk.X, pady=5)
+        ttk.Button(f, text="💎 Loja da Disciplina", command=self.open_store).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Gerenciar Rejeições", command=lambda: self.manage_list("Rejeições", "rejections")).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Configurar Velocidade", command=self.open_settings).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Testar Áudio", command=self.test_audio).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Sair", command=self.quit_app).pack(fill=tk.X, pady=15)
+
+    # 2. A Loja Visual
+    def open_store(self):
+        win = tk.Toplevel(self.root)
+        win.title("Loja da Disciplina")
+        center_window(win, 600, 500)
+        win.transient(self.root)
+        win.grab_set()
+        win.configure(bg="#1E1E1E")
+
+        cfg = load_config_data()
+        econ = cfg.get('economy', {})
+        credits_list = econ.get('flex_credits', [])
+        num_credits = len(credits_list)
+        passes = econ.get('free_passes', 0)
+        streak = econ.get('streak_progress', 0)
+        pending_trade = econ.get('pending_trade', False)
+
+        # --- DASHBOARD ASCII ---
+        ascii_art = f"""
+╔═══════════════════════════════════════════╗
+║            RECURSOS DISPONÍVEIS           ║
+╠═══════════════════════════════════════════╣
+║  💎 Créditos Flex: {num_credits}/4                   ║
+║  🎫 Passes Livres: {passes}                      ║
+║  🔥 Streak Mérito: {streak}/10 dias              ║
+╚═══════════════════════════════════════════╝
+"""
+        lbl_dash = tk.Label(win, text=ascii_art, font=("Consolas", 12), 
+                            bg="#1E1E1E", fg="#00FF00", justify=tk.LEFT)
+        lbl_dash.pack(pady=20)
+
+        # --- LISTA DE VALIDADE ---
+        frame_list = tk.Frame(win, bg="#1E1E1E")
+        frame_list.pack(fill=tk.X, padx=40)
+        
+        tk.Label(frame_list, text="Validade dos Créditos:", font=("Segoe UI", 10, "bold"), 
+                 bg="#1E1E1E", fg="#FFFFFF").pack(anchor=tk.W)
+        
+        if not credits_list:
+            tk.Label(frame_list, text="• Nenhum crédito disponível.", bg="#1E1E1E", fg="#888").pack(anchor=tk.W)
+        else:
+            today = date.today()
+            for c in credits_list:
+                exp = date.fromisoformat(c['expires_at'])
+                days_left = (exp - today).days
+                color = "#FF4444" if days_left < 7 else "#AAAAAA"
+                tk.Label(frame_list, text=f"• 1 Crédito expira em {days_left} dias ({c['expires_at']})", 
+                         bg="#1E1E1E", fg=color).pack(anchor=tk.W)
+
+        # --- ÁREA DE AÇÃO ---
+        frame_actions = tk.Frame(win, bg="#1E1E1E", pady=20)
+        frame_actions.pack(fill=tk.X, padx=40)
+
+        # Botão: USAR FLEX
+        # Verifica se já usou hoje
+        today_str = date.today().isoformat()
+        is_flex_active = (econ.get('flex_active_date') == today_str)
+        
+        def use_flex():
+            if num_credits < 1:
+                messagebox.showerror("Erro", "Sem créditos suficientes.")
+                return
+            
+            resp = messagebox.askyesno("Ativar Flex", 
+                "Deseja gastar 1 Crédito Flex?\n\n"
+                "• Todas as tarefas terão tempo mínimo reduzido para 15 min.\n"
+                "• O streak de mérito (10 dias) NÃO subirá amanhã.\n"
+                "• Essa ação não pode ser desfeita.")
+            if resp:
+                # Consome o mais antigo (índice 0)
+                econ['flex_credits'].pop(0)
+                econ['flex_active_date'] = today_str
+                cfg['economy'] = econ
+                save_config_data(cfg)
+                log_event("FLEX_ACTIVATED", "Modo Flex ativado (-1 crédito).", category="history")
+                win.destroy()
+                messagebox.showinfo("Sucesso", "Modo Flex ATIVADO. Respire fundo.")
+
+        btn_flex = tk.Button(frame_actions, text="USAR FLEXIBILIDADE (-1 💎)", 
+                             bg="#007ACC", fg="white", font=("Segoe UI", 11, "bold"),
+                             state=tk.DISABLED if (is_flex_active or num_credits == 0) else tk.NORMAL,
+                             command=use_flex)
+        btn_flex.pack(fill=tk.X, pady=5)
+        
+        if is_flex_active:
+            tk.Label(frame_actions, text="⚡ MODO FLEX ATIVO HOJE", bg="#1E1E1E", fg="#00CCFF").pack()
+
+        # Botão: TROCAR POR PASSE (TRIGGER)
+        if pending_trade and num_credits >= 4:
+            def trade_pass():
+                resp = messagebox.askyesno("OPORTUNIDADE LENDÁRIA", 
+                    "Deseja trocar TODOS os seus 4 créditos + Bônus por 1 PASSE LIVRE?\n\n"
+                    "O Passe Livre é eterno e completa qualquer dia instantaneamente.")
+                if resp:
+                    econ['flex_credits'] = [] # Zera créditos
+                    econ['free_passes'] += 1
+                    econ['pending_trade'] = False
+                    cfg['economy'] = econ
+                    save_config_data(cfg)
+                    log_event("PASS_BOUGHT", "Trocou 4 créditos por 1 passe.", category="history")
+                    win.destroy()
+                    messagebox.showinfo("GLÓRIA", "Você adquiriu 1 PASSE LIVRE Eterno!")
+
+            btn_trade = tk.Button(frame_actions, text="🔥 RESGATAR PASSE LIVRE (OFERTA) 🔥", 
+                                  bg="#FFD700", fg="black", font=("Segoe UI", 11, "bold"),
+                                  command=trade_pass)
+            btn_trade.pack(fill=tk.X, pady=20)
 
     def test_audio(self):
         cfg = load_config_data()
