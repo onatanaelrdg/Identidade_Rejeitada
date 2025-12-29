@@ -367,12 +367,17 @@ class App:
         grid_frame.columnconfigure(1, weight=1)
 
         def add_stat_row(row, icon, title, value, color):
-            # Ícone
-            tk.Label(grid_frame, text=icon, font=("Segoe UI", 16), bg="#1E1E1E").grid(row=row, column=0, padx=(0, 10), pady=5)
-            # Título
-            tk.Label(grid_frame, text=title, font=("Segoe UI", 12), bg="#1E1E1E", fg="#E0E0E0").grid(row=row, column=1, sticky="w")
-            # Valor (Alinhado a direita e colorido)
-            tk.Label(grid_frame, text=value, font=("Consolas", 14, "bold"), bg="#1E1E1E", fg=color).grid(row=row, column=2, sticky="e")
+            # Ícone (AGORA COM A COR CORRETA: fg=color)
+            tk.Label(grid_frame, text=icon, font=("Segoe UI", 16), 
+                     bg="#1E1E1E", fg=color).grid(row=row, column=0, padx=(0, 10), pady=5)
+            
+            # Título (Cinza claro padrão)
+            tk.Label(grid_frame, text=title, font=("Segoe UI", 12), 
+                     bg="#1E1E1E", fg="#E0E0E0").grid(row=row, column=1, sticky="w")
+            
+            # Valor (Colorido)
+            tk.Label(grid_frame, text=value, font=("Consolas", 14, "bold"), 
+                     bg="#1E1E1E", fg=color).grid(row=row, column=2, sticky="e")
 
         # Adiciona as linhas (com cores temáticas)
         add_stat_row(0, "💎", "Créditos Flex", f"{num_credits}/4", "#00CCFF") # Azul Neon
