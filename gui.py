@@ -423,22 +423,88 @@ class App:
         
         def use_flex():
             if num_credits < 1:
-                messagebox.showerror("Erro", "Sem créditos suficientes.")
+                messagebox.showerror("Saldo Insuficiente", "Você precisa de pelo menos 1 💎.")
                 return
             
-            resp = messagebox.askyesno("Ativar Flex", 
-                "Deseja gastar 1 Crédito Flex?\n\n"
-                "• Todas as tarefas terão tempo mínimo reduzido para 15 min.\n"
-                "• O streak de mérito (10 dias) NÃO subirá amanhã.\n"
-                "• Essa ação não pode ser desfeita.")
-            if resp:
+            # --- MODAL DE CHECKOUT (SUBSTITUI O MESSAGEBOX) ---
+            checkout = tk.Toplevel(win)
+            checkout.title("CONFIRMAR TRANSAÇÃO")
+            center_window(checkout, 450, 380)
+            checkout.transient(win)
+            checkout.grab_set()
+            checkout.configure(bg="#151515") # Fundo um pouco mais escuro para destaque
+            
+            # Borda Ciano para indicar que é sobre Flex
+            main_frame = tk.Frame(checkout, bg="#1E1E1E", highlightbackground="#00CCFF", highlightthickness=2)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+
+            # Cabeçalho
+            tk.Label(main_frame, text="💎", font=("Segoe UI", 40), 
+                     bg="#1E1E1E", fg="#00CCFF").pack(pady=(20, 0))
+            
+            tk.Label(main_frame, text="ATIVAR MODO FLEX", font=("Impact", 18), 
+                     bg="#1E1E1E", fg="#FFFFFF").pack(pady=(5, 15))
+
+            # Caixa de Regras
+            rules_frame = tk.Frame(main_frame, bg="#252525", padx=15, pady=15)
+            rules_frame.pack(fill=tk.X, padx=30)
+            
+            rules = [
+                ("CUSTO:", "1 Crédito Flex", "#00CCFF"),
+                ("EFEITO:", "Tempo mínimo reduzido p/ 15 min", "#FFFFFF"),
+                ("CONSEQUÊNCIA:", "Pausa no Streak de Mérito", "#FF4444"),
+                ("AVISO:", "Esta ação é irreversível", "#888888")
+            ]
+            
+            for title, desc, color in rules:
+                row = tk.Frame(rules_frame, bg="#252525")
+                row.pack(fill=tk.X, pady=2)
+                tk.Label(row, text=title, font=("Segoe UI", 9, "bold"), width=13, anchor="w",
+                         bg="#252525", fg="#AAAAAA").pack(side=tk.LEFT)
+                tk.Label(row, text=desc, font=("Segoe UI", 9, "bold"), 
+                         bg="#252525", fg=color).pack(side=tk.LEFT)
+
+            # Variável de resposta
+            result = {"confirm": False}
+
+            def on_pay():
+                result["confirm"] = True
+                checkout.destroy()
+            
+            def on_cancel():
+                checkout.destroy()
+
+            # Botões de Ação
+            btn_frame = tk.Frame(main_frame, bg="#1E1E1E", pady=20)
+            btn_frame.pack(fill=tk.X, padx=30)
+
+            # Botão PAGAR (Estilo Neon)
+            btn_pay = tk.Button(btn_frame, text="PAGAR 1 💎", font=("Segoe UI", 11, "bold"),
+                                bg="#00CCFF", fg="#000000", relief=tk.FLAT, cursor="hand2",
+                                command=on_pay)
+            btn_pay.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+            # Botão CANCELAR (Estilo Muted)
+            btn_cancel = tk.Button(btn_frame, text="CANCELAR", font=("Segoe UI", 11),
+                                   bg="#333333", fg="#FFFFFF", relief=tk.FLAT, cursor="hand2",
+                                   command=on_cancel)
+            btn_cancel.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
+
+            win.wait_window(checkout)
+            
+            # --- PROCESSAMENTO DA COMPRA ---
+            if result["confirm"]:
+                # Consome o crédito mais antigo (FIFO)
                 econ['flex_credits'].pop(0)
                 econ['flex_active_date'] = today_str
+                
                 cfg['economy'] = econ
                 save_config_data(cfg)
+                
                 log_event("FLEX_ACTIVATED", "Modo Flex ativado (-1 crédito).", category="history")
-                win.destroy()
-                messagebox.showinfo("Sucesso", "Modo Flex ATIVADO. Respire fundo.")
+                
+                win.destroy() # Fecha a loja
+                messagebox.showinfo("Transação Aprovada", "Modo Flex ATIVADO.\nRespire fundo e faça o mínimo hoje.")
 
         btn_flex = tk.Button(frame_actions, text="USAR FLEXIBILIDADE (-1 💎)", 
                              bg="#2E2E2E", fg="#00CCFF", font=("Segoe UI", 11, "bold"),
