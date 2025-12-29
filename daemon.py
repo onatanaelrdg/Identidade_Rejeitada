@@ -337,7 +337,14 @@ class IdentityRejectionSystem:
             for task in self.tasks.values():
                 raw_comp = task.get('completed_on')
                 valid_date = verify_and_get_date(raw_comp)
-                if valid_date != last_completion:
+                is_valid_continuity = False
+
+                if valid_date == last_completion:
+                    is_valid_continuity = True
+                elif valid_date == today_str:
+                    is_valid_continuity = True
+
+                if not is_valid_continuity:
                     all_tasks_completed_yesterday = False
                     break
             
@@ -383,11 +390,16 @@ class IdentityRejectionSystem:
                 # ----------------------------------
 
             for task in self.tasks.values():
-                task['completed_on'] = None
-                task['proof'] = None
+                raw = task.get('completed_on')
+                v_date = verify_and_get_date(raw)
+                
+                if v_date != today_str:
+                    task['completed_on'] = None
+                    task['proof'] = None
             
             self.config['study_mode'] = False
-            self.config['last_completion_date'] = None
+            if self.config.get('last_completion_date') != today_str:
+                self.config['last_completion_date'] = None
             self.save_config()
 
     def speak_text(self, text, tts_speed):
