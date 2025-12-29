@@ -315,7 +315,7 @@ class App:
     def open_store(self):
         win = tk.Toplevel(self.root)
         win.title("Loja da Disciplina")
-        center_window(win, 600, 500)
+        center_window(win, 600, 550)
         win.transient(self.root)
         win.grab_set()
         win.configure(bg="#1E1E1E")
@@ -328,44 +328,91 @@ class App:
         streak = econ.get('streak_progress', 0)
         pending_trade = econ.get('pending_trade', False)
 
-        # --- DASHBOARD ASCII ---
-        ascii_art = f"""
-╔═══════════════════════════════════════════╗
-║            RECURSOS DISPONÍVEIS           ║
-╠═══════════════════════════════════════════╣
-║  💎 Créditos Flex: {num_credits}/4                   ║
-║  🎫 Passes Livres: {passes}                      ║
-║  🔥 Streak Mérito: {streak}/10 dias              ║
-╚═══════════════════════════════════════════╝
-"""
-        lbl_dash = tk.Label(win, text=ascii_art, font=("Consolas", 12), 
-                            bg="#1E1E1E", fg="#00FF00", justify=tk.LEFT)
-        lbl_dash.pack(pady=20)
+        # --- VERIFICAÇÃO EM TEMPO REAL ---
+        today_tasks = get_tasks_for_today()
+        all_done_today = True
+        if not today_tasks: 
+            all_done_today = False
+        else:
+            for t in today_tasks.values():
+                v_date = verify_and_get_date(t.get('completed_on'))
+                if v_date != date.today().isoformat():
+                    all_done_today = False; break
+        
+        last_comp = cfg.get('last_completion_date')
+        today_str = date.today().isoformat()
+        
+        streak_display = f"{streak}/10"
+        
+        if all_done_today and last_comp == today_str:
+             if econ.get('flex_active_date') != today_str:
+                 streak_display = f"{streak} (+1 ⏳)/10"
+
+        # --- DASHBOARD VISUAL (GRID NATIVO) ---
+        # Substitui o ASCII Art por um Frame estruturado
+        
+        # Container com borda sutil
+        dash_frame = tk.Frame(win, bg="#1E1E1E", highlightbackground="#333333", highlightthickness=2)
+        dash_frame.pack(pady=20, padx=40, fill=tk.X)
+
+        # Título da Caixa
+        tk.Label(dash_frame, text="RECURSOS DISPONÍVEIS", font=("Segoe UI", 10, "bold"), 
+                 bg="#1E1E1E", fg="#666666", pady=10).pack(fill=tk.X)
+
+        # Grid interno para alinhamento perfeito
+        grid_frame = tk.Frame(dash_frame, bg="#1E1E1E")
+        grid_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        # Coluna 1 expande para empurrar o valor para a direita
+        grid_frame.columnconfigure(1, weight=1)
+
+        def add_stat_row(row, icon, title, value, color):
+            # Ícone
+            tk.Label(grid_frame, text=icon, font=("Segoe UI", 16), bg="#1E1E1E").grid(row=row, column=0, padx=(0, 10), pady=5)
+            # Título
+            tk.Label(grid_frame, text=title, font=("Segoe UI", 12), bg="#1E1E1E", fg="#E0E0E0").grid(row=row, column=1, sticky="w")
+            # Valor (Alinhado a direita e colorido)
+            tk.Label(grid_frame, text=value, font=("Consolas", 14, "bold"), bg="#1E1E1E", fg=color).grid(row=row, column=2, sticky="e")
+
+        # Adiciona as linhas (com cores temáticas)
+        add_stat_row(0, "💎", "Créditos Flex", f"{num_credits}/4", "#00CCFF") # Azul Neon
+        add_stat_row(1, "🎫", "Passes Livres", f"{passes}", "#FFD700")     # Dourado
+        add_stat_row(2, "🔥", "Streak Mérito", streak_display, "#FF4444")  # Vermelho Fogo
+
+        # Aviso de +1 pendente
+        if "(+1 ⏳)" in streak_display:
+            lbl_info = tk.Label(win, text="* Progresso de hoje será confirmado amanhã.", 
+                                font=("Segoe UI", 8, "italic"), bg="#1E1E1E", fg="#666666")
+            lbl_info.pack(pady=(0, 10))
 
         # --- LISTA DE VALIDADE ---
         frame_list = tk.Frame(win, bg="#1E1E1E")
         frame_list.pack(fill=tk.X, padx=40)
         
         tk.Label(frame_list, text="Validade dos Créditos:", font=("Segoe UI", 10, "bold"), 
-                 bg="#1E1E1E", fg="#FFFFFF").pack(anchor=tk.W)
+                 bg="#1E1E1E", fg="#FFFFFF").pack(anchor=tk.W, pady=(0, 5))
         
         if not credits_list:
-            tk.Label(frame_list, text="• Nenhum crédito disponível.", bg="#1E1E1E", fg="#888").pack(anchor=tk.W)
+            tk.Label(frame_list, text="• Nenhum crédito disponível.", bg="#1E1E1E", fg="#666").pack(anchor=tk.W)
         else:
             today = date.today()
             for c in credits_list:
                 exp = date.fromisoformat(c['expires_at'])
                 days_left = (exp - today).days
+                
+                # Formatação visual da validade
                 color = "#FF4444" if days_left < 7 else "#AAAAAA"
-                tk.Label(frame_list, text=f"• 1 Crédito expira em {days_left} dias ({c['expires_at']})", 
-                         bg="#1E1E1E", fg=color).pack(anchor=tk.W)
+                txt = f"• 1 Crédito expira em {days_left} dias"
+                
+                row = tk.Frame(frame_list, bg="#1E1E1E")
+                row.pack(fill=tk.X)
+                tk.Label(row, text=txt, bg="#1E1E1E", fg=color, font=("Segoe UI", 10)).pack(side=tk.LEFT)
+                tk.Label(row, text=f"({c['expires_at']})", bg="#1E1E1E", fg="#444", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
 
         # --- ÁREA DE AÇÃO ---
         frame_actions = tk.Frame(win, bg="#1E1E1E", pady=20)
         frame_actions.pack(fill=tk.X, padx=40)
 
-        # Botão: USAR FLEX
-        # Verifica se já usou hoje
         today_str = date.today().isoformat()
         is_flex_active = (econ.get('flex_active_date') == today_str)
         
@@ -380,7 +427,6 @@ class App:
                 "• O streak de mérito (10 dias) NÃO subirá amanhã.\n"
                 "• Essa ação não pode ser desfeita.")
             if resp:
-                # Consome o mais antigo (índice 0)
                 econ['flex_credits'].pop(0)
                 econ['flex_active_date'] = today_str
                 cfg['economy'] = econ
@@ -390,22 +436,21 @@ class App:
                 messagebox.showinfo("Sucesso", "Modo Flex ATIVADO. Respire fundo.")
 
         btn_flex = tk.Button(frame_actions, text="USAR FLEXIBILIDADE (-1 💎)", 
-                             bg="#007ACC", fg="white", font=("Segoe UI", 11, "bold"),
+                             bg="#2E2E2E", fg="#00CCFF", font=("Segoe UI", 11, "bold"),
                              state=tk.DISABLED if (is_flex_active or num_credits == 0) else tk.NORMAL,
                              command=use_flex)
         btn_flex.pack(fill=tk.X, pady=5)
         
         if is_flex_active:
-            tk.Label(frame_actions, text="⚡ MODO FLEX ATIVO HOJE", bg="#1E1E1E", fg="#00CCFF").pack()
+            tk.Label(frame_actions, text="⚡ MODO FLEX ATIVO HOJE", font=("Segoe UI", 10, "bold"), bg="#1E1E1E", fg="#00CCFF").pack(pady=5)
 
-        # Botão: TROCAR POR PASSE (TRIGGER)
         if pending_trade and num_credits >= 4:
             def trade_pass():
                 resp = messagebox.askyesno("OPORTUNIDADE LENDÁRIA", 
                     "Deseja trocar TODOS os seus 4 créditos + Bônus por 1 PASSE LIVRE?\n\n"
                     "O Passe Livre é eterno e completa qualquer dia instantaneamente.")
                 if resp:
-                    econ['flex_credits'] = [] # Zera créditos
+                    econ['flex_credits'] = []
                     econ['free_passes'] += 1
                     econ['pending_trade'] = False
                     cfg['economy'] = econ
@@ -414,10 +459,11 @@ class App:
                     win.destroy()
                     messagebox.showinfo("GLÓRIA", "Você adquiriu 1 PASSE LIVRE Eterno!")
 
-            btn_trade = tk.Button(frame_actions, text="🔥 RESGATAR PASSE LIVRE (OFERTA) 🔥", 
+            tk.Label(frame_actions, text="--- OFERTA ESPECIAL ---", bg="#1E1E1E", fg="#FFD700").pack(pady=(10, 0))
+            btn_trade = tk.Button(frame_actions, text="🔥 RESGATAR PASSE LIVRE 🔥", 
                                   bg="#FFD700", fg="black", font=("Segoe UI", 11, "bold"),
                                   command=trade_pass)
-            btn_trade.pack(fill=tk.X, pady=20)
+            btn_trade.pack(fill=tk.X, pady=5)
 
     def test_audio(self):
         cfg = load_config_data()
