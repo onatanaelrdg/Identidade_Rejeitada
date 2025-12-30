@@ -325,82 +325,102 @@ class IdentityRejectionSystem:
         save_config_data(self.config)
             
     def run_new_day_check(self):
+        """
+        Verificação Robusta de Novo Dia.
+        Não confia em 'last_completion_date'. Confia na data individual das tarefas.
+        """
         today_str = date.today().isoformat()
-        last_completion = self.config.get('last_completion_date')
+        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
         
-        # Roda a manutenção econômica primeiro
+        # 1. Manutenção Econômica
         self.process_economy_daily_check()
         
-        if last_completion != today_str:
-            all_tasks_completed_yesterday = True
-            if not self.tasks: all_tasks_completed_yesterday = False
-            for task in self.tasks.values():
-                raw_comp = task.get('completed_on')
-                valid_date = verify_and_get_date(raw_comp)
-                is_valid_continuity = False
-
-                if valid_date == last_completion:
-                    is_valid_continuity = True
-                elif valid_date == today_str:
-                    is_valid_continuity = True
-
-                if not is_valid_continuity:
-                    all_tasks_completed_yesterday = False
-                    break
+        econ = self.config.get('economy', {})
+        last_rewarded = econ.get('last_rewarded_date') # Evita pagar 2x pelo mesmo dia
+        
+        # --- VERIFICAÇÃO DE CONTINUIDADE ---
+        # Verificamos se as tarefas estão em dia (feitas ontem OU adiantadas hoje)
+        
+        all_tasks_ok = True
+        if not self.tasks: all_tasks_ok = False 
+        
+        for task in self.tasks.values():
+            raw = task.get('completed_on')
+            v_date = verify_and_get_date(raw) # Valida hash e pega data
             
-            if last_completion:
-                yesterday = (date.today() - timedelta(days=1)).isoformat()
+            # Se a tarefa não foi feita ontem E nem hoje, a corrente quebrou.
+            if v_date != yesterday_str and v_date != today_str:
+                all_tasks_ok = False
+                break
+        
+        # --- LÓGICA DE STREAK ---
+        # Só processamos se o dia de ontem ainda não foi pago
+        # (Se last_rewarded == today_str, significa que já pagamos hoje, talvez num restart)
+        
+        if last_rewarded != yesterday_str and last_rewarded != today_str:
+            
+            if all_tasks_ok:
+                # SUCESSO: O usuário manteve a disciplina.
+                self.config['consecutive_completion_days'] += 1
                 
-                # --- LÓGICA DE MÉRITO ECONÔMICO ---
-                econ = self.config.get('economy', {})
-                was_flex_day = (econ.get('flex_active_date') == last_completion)
-
-                if last_completion == yesterday and all_tasks_completed_yesterday:
-                    self.config['consecutive_completion_days'] += 1
+                was_flex_day = (econ.get('flex_active_date') == yesterday_str)
+                
+                if not was_flex_day:
+                    econ['streak_progress'] = econ.get('streak_progress', 0) + 1
                     
-                    # Só ganha ponto no streak se NÃO usou flex
-                    if not was_flex_day:
-                        econ['streak_progress'] = econ.get('streak_progress', 0) + 1
-                        
-                        # Bateu 10 dias?
-                        if econ['streak_progress'] >= 10:
-                            econ['streak_progress'] = 0 # Reseta ciclo
-                            
-                            # Verifica espaço no inventário (Max 4)
-                            if len(econ['flex_credits']) < 4:
-                                # Ganha Crédito
-                                expire_date = (date.today() + timedelta(days=90)).isoformat()
-                                econ['flex_credits'].append({
-                                    "earned_date": today_str,
-                                    "expires_at": expire_date
-                                })
-                                log_event("CREDIT_EARNED", "Mérito: 10 dias perfeitos.", category="history")
-                            else:
-                                # Trigger do Passe Livre (Inventário cheio)
-                                econ['pending_trade'] = True
-                                log_event("TRADE_TRIGGER", "Inventário cheio. Troca desbloqueada.", category="history")
-                    
-                elif not all_tasks_completed_yesterday:
-                    # Quebrou streak
+                    # Sistema de Mérito (10 dias)
+                    if econ['streak_progress'] >= 10:
+                        econ['streak_progress'] = 0 
+                        if len(econ['flex_credits']) < 4:
+                            expire_date = (date.today() + timedelta(days=90)).isoformat()
+                            econ['flex_credits'].append({
+                                "earned_date": today_str,
+                                "expires_at": expire_date
+                            })
+                            log_event("CREDIT_EARNED", "Mérito: 10 dias perfeitos.", category="history")
+                        else:
+                            econ['pending_trade'] = True
+                            log_event("TRADE_TRIGGER", "Inventário cheio. Troca desbloqueada.", category="history")
+                
+                # Marca este dia como pago para não repetir
+                econ['last_rewarded_date'] = yesterday_str
+                log_event("STREAK_UPDATE", f"Streak atualizado para {self.config['consecutive_completion_days']}", category="history")
+                
+            else:
+                # FALHA: Tarefas estão atrasadas (data < ontem ou Nulas)
+                # Só reseta se realmente tiver algo a perder
+                if self.config.get('consecutive_completion_days', 0) > 0:
                     self.config['consecutive_completion_days'] = 0
-                    econ['streak_progress'] = 0 # Zera progresso do mérito também
-                    log_event("reset_frequencia", "Falha dia anterior.", category="history")
-                
-                self.config['economy'] = econ
-                # ----------------------------------
+                    econ['streak_progress'] = 0 
+                    log_event("reset_frequencia", "Falha de continuidade detectada.", category="history")
 
-            for task in self.tasks.values():
-                raw = task.get('completed_on')
-                v_date = verify_and_get_date(raw)
-                
-                if v_date != today_str:
-                    task['completed_on'] = None
-                    task['proof'] = None
+        self.config['economy'] = econ
+
+        # --- LIMPEZA DIÁRIA DE TAREFAS ---
+        # Se a tarefa é de ONTEM, limpamos para o usuário fazer HOJE.
+        # Se é de HOJE, mantemos (ele foi rápido e já fez).
+        
+        config_changed = False
+        for task in self.tasks.values():
+            raw = task.get('completed_on')
+            v_date = verify_and_get_date(raw)
             
-            self.config['study_mode'] = False
-            if self.config.get('last_completion_date') != today_str:
-                self.config['last_completion_date'] = None
+            # Se for velha (ontem ou anterior), limpa.
+            if v_date == yesterday_str or (v_date != today_str and v_date is not None):
+                task['completed_on'] = None
+                task['proof'] = None
+                config_changed = True
+        
+        # Reseta o indicador visual global se ele estiver preso em ontem
+        if self.config.get('last_completion_date') == yesterday_str:
+             self.config['last_completion_date'] = None
+             config_changed = True
+
+        if config_changed:
             self.save_config()
+        else:
+            # Salva de qualquer jeito para garantir o update da economia
+            save_config_data(self.config)
 
     def speak_text(self, text, tts_speed):
         try:

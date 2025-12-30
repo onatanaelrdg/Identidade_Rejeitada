@@ -424,7 +424,8 @@ def load_config_data():
             'streak_progress': 0,     # 0 a 10
             'last_month_reset': None, # YYYY-MM
             'pending_trade': False,   # Gatilho do 5º crédito
-            'flex_active_date': None  # Data em que o Flex foi ativado (YYYY-MM-DD)
+            'flex_active_date': None,  # Data em que o Flex foi ativado (YYYY-MM-DD)
+            'last_rewarded_date': None # Memória de pagamento de Streak
         }
     }
     
