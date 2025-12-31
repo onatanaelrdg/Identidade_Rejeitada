@@ -324,43 +324,75 @@ class IdentityRejectionSystem:
         self.config['tasks'] = self.tasks
         save_config_data(self.config)
             
+    # No daemon.py (dentro da classe IdentityRejectionSystem)
+
     def run_new_day_check(self):
         """
-        Verificação Robusta de Novo Dia.
-        Não confia em 'last_completion_date'. Confia na data individual das tarefas.
+        Verificação Robusta: Só cobra o que estava agendado para ONTEM.
+        Ignora tarefas de outros dias e tarefas arquivadas.
         """
         today_str = date.today().isoformat()
-        yesterday_str = (date.today() - timedelta(days=1)).isoformat()
+        yesterday_date_obj = date.today() - timedelta(days=1)
+        yesterday_str = yesterday_date_obj.isoformat()
+        yesterday_weekday = yesterday_date_obj.weekday() # 0=Seg, 6=Dom
         
         # 1. Manutenção Econômica
         self.process_economy_daily_check()
         
         econ = self.config.get('economy', {})
-        last_rewarded = econ.get('last_rewarded_date') # Evita pagar 2x pelo mesmo dia
+        last_rewarded = econ.get('last_rewarded_date')
         
-        # --- VERIFICAÇÃO DE CONTINUIDADE ---
-        # Verificamos se as tarefas estão em dia (feitas ontem OU adiantadas hoje)
+        # --- VERIFICAÇÃO DE CONTINUIDADE (CORRIGIDA) ---
         
         all_tasks_ok = True
-        if not self.tasks: all_tasks_ok = False 
+        tasks_checked_count = 0
+        
+        if not self.tasks: 
+            # Se não tem tarefas ativas, não consideramos falha, mas também não ganha streak
+            all_tasks_ok = False 
         
         for task in self.tasks.values():
-            raw = task.get('completed_on')
-            v_date = verify_and_get_date(raw) # Valida hash e pega data
+            # A. Ignora tarefas Arquivadas
+            if task.get('status') == 'encerrado':
+                continue
+
+            # B. Verifica se a tarefa era OBRIGATÓRIA ONTEM
+            sched_type = task.get('schedule_type', 'daily')
+            is_required_yesterday = False
             
-            # Se a tarefa não foi feita ontem E nem hoje, a corrente quebrou.
+            if sched_type == 'daily':
+                is_required_yesterday = True
+            elif sched_type == 'custom':
+                if yesterday_weekday in task.get('schedule_days', []):
+                    is_required_yesterday = True
+            
+            # Se não era pra fazer ontem, pula a validação
+            if not is_required_yesterday:
+                continue
+
+            tasks_checked_count += 1
+            
+            # C. Validação da Data (Hash)
+            raw = task.get('completed_on')
+            v_date = verify_and_get_date(raw)
+            
+            # Se era obrigatória e (não foi feita ontem E nem adiantada hoje) -> FALHA
             if v_date != yesterday_str and v_date != today_str:
                 all_tasks_ok = False
+                # Log de debug para você saber exatamente qual tarefa falhou
+                log_event("DEBUG_FAIL", f"Tarefa falhou: {task.get('name')}. Data encontrada: {v_date}", category="system")
                 break
         
+        # Se não tinha nenhuma tarefa agendada para ontem (ex: ontem foi Domingo de folga),
+        # mantemos o streak vivo, mas não aumentamos o contador.
+        day_was_empty = (tasks_checked_count == 0)
+
         # --- LÓGICA DE STREAK ---
-        # Só processamos se o dia de ontem ainda não foi pago
-        # (Se last_rewarded == today_str, significa que já pagamos hoje, talvez num restart)
         
         if last_rewarded != yesterday_str and last_rewarded != today_str:
             
-            if all_tasks_ok:
-                # SUCESSO: O usuário manteve a disciplina.
+            if all_tasks_ok and not day_was_empty:
+                # SUCESSO
                 self.config['consecutive_completion_days'] += 1
                 
                 was_flex_day = (econ.get('flex_active_date') == yesterday_str)
@@ -368,7 +400,6 @@ class IdentityRejectionSystem:
                 if not was_flex_day:
                     econ['streak_progress'] = econ.get('streak_progress', 0) + 1
                     
-                    # Sistema de Mérito (10 dias)
                     if econ['streak_progress'] >= 10:
                         econ['streak_progress'] = 0 
                         if len(econ['flex_credits']) < 4:
@@ -380,15 +411,13 @@ class IdentityRejectionSystem:
                             log_event("CREDIT_EARNED", "Mérito: 10 dias perfeitos.", category="history")
                         else:
                             econ['pending_trade'] = True
-                            log_event("TRADE_TRIGGER", "Inventário cheio. Troca desbloqueada.", category="history")
+                            log_event("TRADE_TRIGGER", "Inventário cheio.", category="history")
                 
-                # Marca este dia como pago para não repetir
                 econ['last_rewarded_date'] = yesterday_str
-                log_event("STREAK_UPDATE", f"Streak atualizado para {self.config['consecutive_completion_days']}", category="history")
+                log_event("STREAK_UPDATE", f"Streak: {self.config['consecutive_completion_days']}", category="history")
                 
-            else:
-                # FALHA: Tarefas estão atrasadas (data < ontem ou Nulas)
-                # Só reseta se realmente tiver algo a perder
+            elif not all_tasks_ok and not day_was_empty:
+                # FALHA REAL (Tinha tarefa e não fez)
                 if self.config.get('consecutive_completion_days', 0) > 0:
                     self.config['consecutive_completion_days'] = 0
                     econ['streak_progress'] = 0 
@@ -396,22 +425,18 @@ class IdentityRejectionSystem:
 
         self.config['economy'] = econ
 
-        # --- LIMPEZA DIÁRIA DE TAREFAS ---
-        # Se a tarefa é de ONTEM, limpamos para o usuário fazer HOJE.
-        # Se é de HOJE, mantemos (ele foi rápido e já fez).
-        
+        # --- LIMPEZA DIÁRIA ---
         config_changed = False
         for task in self.tasks.values():
             raw = task.get('completed_on')
             v_date = verify_and_get_date(raw)
             
-            # Se for velha (ontem ou anterior), limpa.
+            # Limpa se for velha (ontem ou anterior). Mantém se for HOJE.
             if v_date == yesterday_str or (v_date != today_str and v_date is not None):
                 task['completed_on'] = None
                 task['proof'] = None
                 config_changed = True
         
-        # Reseta o indicador visual global se ele estiver preso em ontem
         if self.config.get('last_completion_date') == yesterday_str:
              self.config['last_completion_date'] = None
              config_changed = True
@@ -419,7 +444,6 @@ class IdentityRejectionSystem:
         if config_changed:
             self.save_config()
         else:
-            # Salva de qualquer jeito para garantir o update da economia
             save_config_data(self.config)
 
     def speak_text(self, text, tts_speed):
