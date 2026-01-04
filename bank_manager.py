@@ -5,7 +5,6 @@ import uuid
 import hashlib
 import tkinter as tk
 from datetime import date, datetime, timedelta
-# ADICIONADO: log_event para registrar a violação
 from core import APP_DATA_DIR, atomic_write, SECRET_SALT, log_event
 
 # Caminho do Ledger
@@ -65,7 +64,6 @@ def alert_security_breach(error_msg):
 def calculate_hash(index, timestamp, type_, task, amount, unlock_date, prev_hash):
     """
     Gera o hash SHA-256 do bloco.
-    BLINDADO: Inclui unlock_date e todos os campos vitais.
     """
     payload = f"{index}{timestamp}{type_}{task}{amount}{unlock_date}{prev_hash}{SECRET_SALT}".encode('utf-8')
     return hashlib.sha256(payload).hexdigest()
@@ -229,7 +227,7 @@ def spend_minutes(minutes_needed):
     locked, available = get_balances()
     
     if available < minutes_needed:
-        return False, f"Saldo insuficiente. Tem: {available}m | Precisa: {minutes_needed}m"
+        return False, f"Saldo insuficiente. Tem: {available}min | Precisa: {minutes_needed}min"
         
     data = load_ledger()
     add_block_to_chain(data['chain'], "SPEND", "Standby Mode", -minutes_needed, date.today().isoformat())

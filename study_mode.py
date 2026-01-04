@@ -102,13 +102,53 @@ def return_to_main_app():
     
     sys.exit()
 
+# --- GERENCIAMENTO DE INTERVALOS DIÁRIOS ---
+
+def get_daily_stats(config):
+    """Retorna as estatísticas de hoje, resetando se mudou o dia."""
+    today_str = datetime.now().date().isoformat()
+    stats = config.get('daily_break_stats', {})
+    
+    # Se não existe ou é de outro dia, reseta
+    if stats.get('date') != today_str:
+        stats = {
+            'date': today_str,
+            'focus_minutes': 0,
+            'used_10': 0,
+            'used_20': 0
+        }
+    return stats
+
+def save_focus_progress(minutes_done):
+    """Soma o tempo trabalhado ao contador diário."""
+    cfg = load_config_data()
+    stats = get_daily_stats(cfg)
+    
+    stats['focus_minutes'] += minutes_done
+    
+    cfg['daily_break_stats'] = stats
+    save_config_data(cfg)
+
+def use_break_credit(break_type):
+    """Consome um crédito de intervalo (10 ou 20)."""
+    cfg = load_config_data()
+    stats = get_daily_stats(cfg)
+    
+    if break_type == 10:
+        stats['used_10'] += 1
+    elif break_type == 20:
+        stats['used_20'] += 1
+        
+    cfg['daily_break_stats'] = stats
+    save_config_data(cfg)
+
 # --- CLASSE DO SETUP (A Negociação) ---
 
 class SetupWindow:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Contrato de Silêncio")
-        self.center_window(400, 350)
+        self.center_window(400, 380)
         self.root.config(bg="#1A1A1A")
         self.root.protocol("WM_DELETE_WINDOW", self.on_cancel)
         self.root.attributes("-topmost", True)
@@ -129,10 +169,8 @@ class SetupWindow:
         style.configure("TButton", background="#333333", foreground="#FFFFFF", font=("Segoe UI", 10, "bold"), borderwidth=0)
         style.map("TButton", background=[('active', '#555555')])
         
-        frame = ttk.Frame(self.root, padding=20)
+        frame = tk.Frame(self.root, bg="#1A1A1A", padx=20, pady=20)
         frame.pack(fill=tk.BOTH, expand=True)
-        # Hack para mudar cor do frame no ttk clam
-        tk.Frame(frame, bg="#1A1A1A").place(relwidth=1, relheight=1)
 
         # Logar evento de Setup
         log_event("setup", "Usuário iniciou o Setup.")
@@ -164,6 +202,63 @@ class SetupWindow:
                                     bg="#2E7D32", fg="white", activebackground="#1B5E20", activeforeground="white",
                                     command=self.on_leisure_start, relief=tk.FLAT, cursor="hand2")
             btn_leisure.pack(fill=tk.X, pady=(10, 5), ipady=5)
+
+        # --- ÁREA DE INTERVALOS (NOVO) ---
+        
+        # 1. Carrega dados
+        config = load_config_data()
+        stats = get_daily_stats(config)
+        total_min = stats['focus_minutes']
+        
+        # 2. Cálculos de Direito
+        # A cada 100min (1h40) ganha um de 10m
+        earned_10 = total_min // 100
+        avail_10 = max(0, earned_10 - stats['used_10'])
+        next_10 = 100 - (total_min % 100)
+        
+        # A cada 200min (3h20) ganha um de 20m
+        earned_20 = total_min // 200
+        avail_20 = max(0, earned_20 - stats['used_20'])
+        next_20 = 200 - (total_min % 200)
+        
+        lbl_info = tk.Label(frame, text=f"Foco Hoje: {total_min} min", font=("Segoe UI", 8), bg="#1A1A1A", fg="#666")
+        lbl_info.pack(pady=(10, 0))
+
+        # BOTÃO INTERVALO 10 MIN
+        txt_10 = f"☕ Intervalo 10m [{avail_10}]"
+        if avail_10 == 0:
+            txt_10 += f" (Faltam {next_10}m)"
+            state_10 = tk.DISABLED
+            bg_10 = "#333333"
+            fg_10 = "#666666"
+        else:
+            state_10 = tk.NORMAL
+            bg_10 = "#009688" # Teal
+            fg_10 = "white"
+
+        btn_break_10 = tk.Button(frame, text=txt_10, font=("Segoe UI", 9),
+                                 bg=bg_10, fg=fg_10, state=state_10, relief=tk.FLAT,
+                                 command=lambda: self.start_break_session(10))
+        btn_break_10.pack(fill=tk.X, pady=2)
+
+        # BOTÃO LANCHE 20 MIN
+        txt_20 = f"🥪 Lanche 20m [{avail_20}]"
+        if avail_20 == 0:
+            txt_20 += f" (Faltam {next_20}m)"
+            state_20 = tk.DISABLED
+            bg_20 = "#333333"
+            fg_20 = "#666666"
+        else:
+            state_20 = tk.NORMAL
+            bg_20 = "#FF9800" # Laranja
+            fg_20 = "black"
+
+        btn_break_20 = tk.Button(frame, text=txt_20, font=("Segoe UI", 9),
+                                 bg=bg_20, fg=fg_20, state=state_20, relief=tk.FLAT,
+                                 command=lambda: self.start_break_session(20))
+        btn_break_20.pack(fill=tk.X, pady=(2, 10))
+        
+        # ---------------------------------
         
         # 4. Botões
         btn_start = tk.Button(frame, text="ASSINAR E INICIAR", font=("Segoe UI", 11, "bold"), 
@@ -171,10 +266,12 @@ class SetupWindow:
                               command=self.on_start, relief=tk.FLAT, cursor="hand2")        
         btn_start.pack(fill=tk.X, pady=5, ipady=5)
 
+        '''
         btn_cancel = tk.Button(frame, text="Cancelar", font=("Segoe UI", 10), 
                                bg="#333333", fg="#AAAAAA", activebackground="#444444", activeforeground="white",
                                command=self.on_cancel, relief=tk.FLAT, cursor="hand2")
         btn_cancel.pack(fill=tk.X, pady=5)
+        '''
 
     def _activate_study_mode_config(self):
         """Ativa o modo estudo no arquivo de configuração."""
@@ -182,6 +279,24 @@ class SetupWindow:
         config['study_mode'] = True
         save_config_data(config)
         log_event("study_mode_on", "Modo Estudo/Trabalho ativado (via GUI).")
+
+    def start_break_session(self, duration):
+        """Inicia uma sessão de intervalo."""
+        if not messagebox.askyesno("Intervalo", f"Iniciar pausa de {duration} minutos?\nO computador será liberado."):
+            return
+            
+        use_break_credit(duration)
+        
+        # Configura sessão como 'break'
+        config = load_config_data()
+        config['study_mode'] = True
+        config['session_type'] = f'break_{duration}' # break_10 ou break_20
+        save_config_data(config)
+        
+        log_event("break_start", f"Intervalo de {duration}m iniciado.")
+        
+        self.root.destroy()
+        start_overlay(duration, f"Intervalo ({duration} min)")
 
     def on_start(self):
         task = self.entry_task.get().strip()
@@ -337,6 +452,25 @@ class OverlayWindow:
         config = load_config_data()
         is_standby = (config.get('session_type') == 'standby')
 
+        # [NOVO] LÓGICA DE INTERVALO (Visual e Comportamento)
+        if 'break' in session_type:
+            try:
+                # Visual Azul Relaxante
+                self.lbl_task.config(text=f"RECARREGANDO ENERGIA... ({self.minutes}m)", fg="#03A9F4")
+            except: pass
+            
+            # Timer simples sem popups
+            total_seconds = self.minutes * 60
+            start_time = time.time()
+            while self.running:
+                elapsed = time.time() - start_time
+                if elapsed >= total_seconds:
+                    self.running = False
+                    self.root.after(0, self.time_expired)
+                    break
+                time.sleep(1)
+            return
+
         total_seconds = self.minutes * 60
         
         # Se for LAZER, mudamos o comportamento:
@@ -408,6 +542,14 @@ class OverlayWindow:
 
     def time_expired(self):
         """O tempo acabou. Fecha overlay e reabre setup."""
+        # [NOVO] Se for sessão de trabalho, computa os créditos
+        config = load_config_data()
+        session_type = config.get('session_type', 'focus')
+        
+        if 'break' not in session_type and session_type != 'standby':
+            save_focus_progress(self.minutes)
+            log_event("progress_saved", f"+{self.minutes} min para intervalos.")
+
         messagebox.showinfo("TEMPO ESGOTADO", "O seu tempo de silêncio acabou.\nRenove o contrato ou volte ao gerenciador.")
         log_event("study_mode_expired", "Usuário atingiu o tempo definido.")
         self.root.destroy()
