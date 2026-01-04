@@ -24,7 +24,7 @@ from core import (
 )
 from daemon import show_standalone_popup
 # --- NOVO: Integração com o Banco de Horas ---
-from bank_manager import create_transaction
+from bank_manager import create_transaction, get_balances, get_history
 
 class App:
     def __init__(self, root):
@@ -325,6 +325,7 @@ class App:
         f = ttk.Frame(win, padding="15"); f.pack(fill=tk.BOTH, expand=True)
         ttk.Button(f, text="Gerenciar Tarefas", command=self.open_task_manager).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="💎 Loja da Disciplina", command=self.open_store).pack(fill=tk.X, pady=5)
+        ttk.Button(f, text="⏳ Banco de Horas", command=self.open_bank_statement).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Gerenciar Rejeições", command=lambda: self.manage_list("Rejeições", "rejections")).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Configurar Velocidade", command=self.open_settings).pack(fill=tk.X, pady=5)
         ttk.Button(f, text="Testar Áudio", command=self.test_audio).pack(fill=tk.X, pady=5)
@@ -519,6 +520,118 @@ class App:
                                   bg="#FFD700", fg="black", font=("Segoe UI", 11, "bold"),
                                   command=trade_pass)
             btn_trade.pack(fill=tk.X, pady=5)
+
+    def open_bank_statement(self):
+        win = tk.Toplevel(self.root)
+        win.title("Extrato do Banco de Horas")
+        center_window(win, 700, 500)
+        win.transient(self.root)
+        win.grab_set()
+        win.configure(bg="#1E1E1E")
+
+        # 1. Obter Dados
+        locked_min, available_min = get_balances()
+        history = get_history()
+
+        def fmt_time(minutes):
+            h = minutes // 60
+            m = minutes % 60
+            return f"{h}h {m}m"
+
+        # 2. Dashboard (Cabeçalho)
+        dash_frame = tk.Frame(win, bg="#1E1E1E", pady=20)
+        dash_frame.pack(fill=tk.X)
+
+        # Container Centralizado para os Saldos
+        stats_container = tk.Frame(dash_frame, bg="#1E1E1E")
+        stats_container.pack()
+
+        # Saldo Futuro (Bloqueado)
+        f_locked = tk.Frame(stats_container, bg="#252525", padx=20, pady=10)
+        f_locked.pack(side=tk.LEFT, padx=10)
+        tk.Label(f_locked, text="A LIBERAR", font=("Segoe UI", 9, "bold"), bg="#252525", fg="#888888").pack()
+        tk.Label(f_locked, text=fmt_time(locked_min), font=("Consolas", 18, "bold"), bg="#252525", fg="#FF6666").pack()
+        tk.Label(f_locked, text="Investimento a longo prazo", font=("Segoe UI", 8), bg="#252525", fg="#555").pack()
+
+        # Saldo Atual (Disponível)
+        f_avail = tk.Frame(stats_container, bg="#252525", padx=20, pady=10)
+        f_avail.pack(side=tk.LEFT, padx=10)
+        tk.Label(f_avail, text="DISPONÍVEL HOJE", font=("Segoe UI", 9, "bold"), bg="#252525", fg="#888888").pack()
+        tk.Label(f_avail, text=fmt_time(available_min), font=("Consolas", 18, "bold"), bg="#252525", fg="#4CAF50").pack()
+        tk.Label(f_avail, text="Pode ser usado agora", font=("Segoe UI", 8), bg="#252525", fg="#555").pack()
+
+        # 3. Tabela de Transações
+        table_frame = ttk.Frame(win, padding=10)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = ("Data", "Tarefa", "Ganho", "Restante", "Status/Liberação")
+        tree = ttk.Treeview(table_frame, columns=cols, show="headings", selectmode="none")
+        
+        # Configuração das Colunas
+        tree.heading("Data", text="Data Origem")
+        tree.heading("Tarefa", text="Fonte")
+        tree.heading("Ganho", text="Depósito")
+        tree.heading("Restante", text="Saldo")
+        tree.heading("Status/Liberação", text="Disponibilidade")
+
+        tree.column("Data", width=90, anchor="center")
+        tree.column("Tarefa", width=200, anchor="w")
+        tree.column("Ganho", width=80, anchor="center")
+        tree.column("Restante", width=80, anchor="center")
+        tree.column("Status/Liberação", width=120, anchor="center")
+
+        # Scrollbar
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Tags de Cor
+        tree.tag_configure('available', foreground='#4CAF50') # Verde
+        tree.tag_configure('locked', foreground='#AAAAAA')    # Cinza/Neutro
+        tree.tag_configure('depleted', foreground='#444444')  # Escuro (Gasto)
+
+        # Popular Tabela
+        today_str = date.today().isoformat()
+        
+        for tx in history:
+            origin = tx.get('origin_date')
+            task = tx.get('task_source')
+            earned = tx.get('amount_earned')
+            remain = tx.get('amount_remaining')
+            unlock = tx.get('unlock_date')
+            
+            # Formata data para BR
+            try:
+                dt_obj = date.fromisoformat(origin)
+                origin_fmt = dt_obj.strftime("%d/%m/%y")
+                
+                ul_obj = date.fromisoformat(unlock)
+                unlock_fmt = ul_obj.strftime("%d/%m/%y")
+            except:
+                origin_fmt = origin
+                unlock_fmt = unlock
+
+            status_txt = unlock_fmt
+            tag = "locked"
+
+            if remain == 0:
+                tag = "depleted"
+                status_txt = "ESGOTADO"
+            elif unlock <= today_str:
+                tag = "available"
+                status_txt = "LIBERADO"
+            
+            # Se for locked, mostra data de liberação com ícone de cadeado
+            if tag == "locked":
+                status_txt = f"🔒 {unlock_fmt}"
+
+            vals = (origin_fmt, task, f"+{earned}m", f"{remain}m", status_txt)
+            tree.insert("", tk.END, values=vals, tags=(tag,))
+
+        # Botão Fechar
+        tk.Button(win, text="FECHAR EXTRATO", font=("Segoe UI", 10), 
+                  bg="#333333", fg="white", relief=tk.FLAT, command=win.destroy).pack(pady=10)
 
     def test_audio(self):
         cfg = load_config_data()
