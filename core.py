@@ -141,6 +141,10 @@ def run_backup_system(arquivo_alterado=None):
             # MODO COMPLETO (Boot): Varre tudo
             if os.path.exists(CONFIG_FILE):
                 files_to_rotate.append(CONFIG_FILE)
+
+            bank_path = os.path.join(APP_DATA_DIR, "bank.json")
+            if os.path.exists(bank_path):
+                files_to_rotate.append(bank_path)
             
             if os.path.exists(LOG_DIR):
                 for f in os.listdir(LOG_DIR):
