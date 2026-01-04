@@ -240,8 +240,11 @@ class App:
         
         res = {"t": None, "d": None}
         
-        def check_validation():
-            if not is_time_tracking: return True
+        # --- NOVO FLUXO: Separação de Validação e Commit ---
+        
+        def validate_inputs():
+            """Valida os números e retorna o valor (int) ou 'PASS' ou False."""
+            if not is_time_tracking: return 0 # 0 = OK, mas sem tempo a registrar
             
             user_input = time_entry.get().strip()
             
@@ -250,6 +253,8 @@ class App:
                 passes = econ.get('free_passes', 0)
                 if passes > 0:
                     if messagebox.askyesno("Usar Passe", f"Você tem {passes} passes.\nDeseja gastar 1 para pular esta tarefa?"):
+                        # Nota: Descontamos o passe aqui pois requer interação do usuário, 
+                        # mas se ele cancelar a prova depois, perde o passe. É aceitável.
                         econ['free_passes'] -= 1
                         cfg['economy'] = econ
                         save_config_data(cfg)
@@ -271,41 +276,56 @@ class App:
                 messagebox.showerror("Falha de Disciplina", f"Você fez {actual_minutes}min. A meta de hoje era {effective_min_minutes}min.\nComplete o tempo antes de marcar.")
                 return False
                 
-            # --- BANCO DE HORAS (INTEGRAÇÃO) ---
-            # Só tenta depositar se passou na validação básica.
-            # IMPORTANTE: Passamos o `original_min_minutes` para o cálculo do bônus.
-            # Se estiver em modo Flex, `original` continua sendo 90 (exemplo).
-            # Se você fez 100m no dia Flex (meta 15), o excedente para banco é 100 - 90 = 10.
-            # Isso evita que o modo Flex gere banco fácil.
-            success, msg = create_transaction(task_name, original_min_minutes, actual_minutes)
-            
+            return actual_minutes
+
+        def commit_bank_transaction(validated_value):
+            """Executa a transação no banco SOMENTE no final."""
+            if validated_value == "PASS" or not is_time_tracking:
+                return
+
+            # validated_value é int aqui
+            success, msg = create_transaction(task_name, original_min_minutes, validated_value)
             if success:
-                # Feedback de depósito positivo
                 messagebox.showinfo("Banco de Horas", msg)
-                
-            return True
 
         def save_txt():
-            valid = check_validation()
-            if not valid: return
+            # 1. Valida Números primeiro
+            val_result = validate_inputs()
+            if val_result is False: return
             
+            # 2. Valida Texto da Prova
             d = entry.get("1.0", tk.END).strip()
-            if valid == "PASS": d = "CONCLUÍDO COM PASSE LIVRE 🎫"
             
-            if d:
-                res["t"] = "text"; res["d"] = d
-                win.destroy()
-            else: messagebox.showwarning("Vazio", "Escreva algo.")
+            if val_result == "PASS": 
+                d = "CONCLUÍDO COM PASSE LIVRE 🎫"
+            elif not d: # Se não for passe e não tiver texto
+                messagebox.showwarning("Vazio", "Escreva algo.")
+                return
+
+            # 3. SE CHEGOU AQUI, ESTÁ TUDO CERTO. COMMIT NO BANCO.
+            commit_bank_transaction(val_result)
+
+            res["t"] = "text"; res["d"] = d
+            win.destroy()
 
         def save_img():
-            valid = check_validation()
-            if not valid: return
-            if valid == "PASS":
-                messagebox.showinfo("Info", "Passe Livre não requer imagem."); res["t"] = "text"; res["d"] = "CONCLUÍDO COM PASSE LIVRE 🎫"; win.destroy(); return
+            # 1. Valida Números primeiro
+            val_result = validate_inputs()
+            if val_result is False: return
 
+            if val_result == "PASS":
+                messagebox.showinfo("Info", "Passe Livre não requer imagem.")
+                res["t"] = "text"; res["d"] = "CONCLUÍDO COM PASSE LIVRE 🎫"
+                win.destroy()
+                return
+
+            # 2. Valida Imagem
             fp = filedialog.askopenfilename(filetypes=[("Imagens", "*.png *.jpg")])
             if fp:
                 try:
+                    # 3. SE CHEGOU AQUI, ESTÁ TUDO CERTO. COMMIT NO BANCO.
+                    commit_bank_transaction(val_result)
+                    
                     np = os.path.join(PROOFS_DIR, f"proof_{date.today()}_{os.path.basename(fp)}")
                     shutil.copy(fp, np)
                     res["t"] = "image"; res["d"] = np
