@@ -2,163 +2,273 @@
 import os
 import json
 import uuid
+import hashlib
+import tkinter as tk
 from datetime import date, datetime, timedelta
-from core import APP_DATA_DIR, atomic_write, run_backup_system
+# ADICIONADO: log_event para registrar a violação
+from core import APP_DATA_DIR, atomic_write, SECRET_SALT, log_event
 
-# Define o caminho do Banco de Dados
+# Caminho do Ledger
 BANK_FILE = os.path.join(APP_DATA_DIR, "bank.json")
 
-def load_bank_data():
-    """Carrega o ledger do banco. Se não existir, cria a estrutura inicial."""
-    default_structure = {
-        "transactions": []
-    }
-    
-    if not os.path.exists(BANK_FILE):
-        return default_structure
+# --- SISTEMA DE ALERTA VISUAL E LOG ---
+def alert_security_breach(error_msg):
+    """
+    Exibe um Popup Crítico Vermelho e LOGA a violação na segurança.
+    """
+    # 1. REGISTRO FORENSE (O mais importante)
+    # Isso vai para o security_log.json com hash na blockchain principal
+    try:
+        log_event("BANK_INTEGRITY_FAIL", f"Violação Crítica do Banco de Horas: {error_msg}", category="security")
+    except:
+        print("FALHA AO LOGAR VIOLAÇÃO DE SEGURANÇA")
+
+    # 2. ALERTA VISUAL (O Pânico)
+    try:
+        root = tk.Tk()
+        root.withdraw() 
         
+        popup = tk.Toplevel(root)
+        popup.title("ALERTA DE SEGURANÇA MÁXIMA")
+        popup.attributes("-topmost", True)
+        
+        bg_color = "#330000" 
+        fg_color = "#FF0000" 
+        
+        popup.configure(bg=bg_color)
+        
+        w, h = 600, 300
+        sw = popup.winfo_screenwidth()
+        sh = popup.winfo_screenheight()
+        x, y = (sw - w) // 2, (sh - h) // 2
+        popup.geometry(f"{w}x{h}+{x}+{y}")
+        
+        tk.Label(popup, text="⚠️ VIOLAÇÃO DE INTEGRIDADE ⚠️", font=("Impact", 24), 
+                 bg=bg_color, fg=fg_color).pack(pady=(20, 10))
+                 
+        tk.Label(popup, text="O Banco de Horas foi adulterado manualmente.", font=("Segoe UI", 12, "bold"), 
+                 bg=bg_color, fg="#FFFFFF").pack()
+                 
+        tk.Label(popup, text=f"REGISTRO DE SEGURANÇA CRIADO.\nDETALHE: {error_msg}", font=("Consolas", 10), 
+                 bg=bg_color, fg="#FFAAAA", pady=20).pack()
+
+        tk.Button(popup, text="ENTENDI (O SALDO SERÁ ZERADO)", font=("Segoe UI", 10, "bold"),
+                  bg="#FF0000", fg="white", command=lambda: [popup.destroy(), root.destroy()]).pack(pady=10)
+        
+        popup.grab_set()
+        root.wait_window(popup)
+    except:
+        print(f"CRITICAL FAIL: {error_msg}")
+
+# --- LÓGICA DE BLOCKCHAIN ---
+
+def calculate_hash(index, timestamp, type_, task, amount, unlock_date, prev_hash):
+    """
+    Gera o hash SHA-256 do bloco.
+    BLINDADO: Inclui unlock_date e todos os campos vitais.
+    """
+    payload = f"{index}{timestamp}{type_}{task}{amount}{unlock_date}{prev_hash}{SECRET_SALT}".encode('utf-8')
+    return hashlib.sha256(payload).hexdigest()
+
+def init_genesis_block():
+    """Cria o bloco zero."""
+    now_iso = datetime.now().isoformat()
+    genesis_unlock = "2000-01-01"
+    
+    genesis = {
+        "index": 0,
+        "timestamp": now_iso,
+        "type": "GENESIS",
+        "task_source": "SYSTEM",
+        "amount": 0,
+        "unlock_date": genesis_unlock,
+        "previous_hash": "0" * 64,
+        "hash": ""
+    }
+    genesis["hash"] = calculate_hash(0, now_iso, "GENESIS", "SYSTEM", 0, genesis_unlock, "0"*64)
+    return {"chain": [genesis]}
+
+def load_ledger():
+    """Carrega a blockchain."""
+    if not os.path.exists(BANK_FILE):
+        return init_genesis_block()
+    
     try:
         with open(BANK_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Erro ao ler bank.json: {e}")
-        return default_structure
+            data = json.load(f)
+        
+        if "transactions" in data and "chain" not in data:
+            return migrate_old_format(data)
+            
+        return data
+    except:
+        return init_genesis_block()
 
-def save_bank_data(data):
-    """Persiste os dados com segurança atômica e aciona backup."""
-    try:
+def migrate_old_format(old_data):
+    """Converte formato inseguro para Blockchain."""
+    new_data = init_genesis_block()
+    chain = new_data["chain"]
+    
+    for tx in old_data.get("transactions", []):
+        add_block_to_chain(chain, "DEPOSIT", tx.get("task_source"), 
+                           tx.get("amount_earned"), tx.get("unlock_date"))
+        
+        gasto = tx.get("amount_earned", 0) - tx.get("amount_remaining", 0)
+        if gasto > 0:
+             add_block_to_chain(chain, "SPEND", "Migração de Gasto", -gasto, date.today().isoformat())
+
+    save_ledger(new_data)
+    return new_data
+
+def verify_integrity(chain):
+    """Auditoria completa da corrente. Dispara ALERTA + LOG se falhar."""
+    for i in range(1, len(chain)):
+        current = chain[i]
+        prev = chain[i-1]
+        
+        # 1. Elo da corrente
+        if current['previous_hash'] != prev['hash']:
+            msg = f"Quebra de corrente no bloco {i}.\nLink Hash inválido."
+            alert_security_breach(msg)
+            return False
+            
+        # 2. Conteúdo do bloco
+        recalc = calculate_hash(
+            current['index'], 
+            current['timestamp'], 
+            current['type'], 
+            current['task_source'], 
+            current['amount'], 
+            current['unlock_date'], 
+            current['previous_hash']
+        )
+        
+        if current['hash'] != recalc:
+            msg = f"Conteúdo adulterado no bloco {i}.\nHash de conteúdo inválido."
+            alert_security_breach(msg)
+            return False
+            
+    return True
+
+def add_block_to_chain(chain, type_, task, amount, unlock_date):
+    last_block = chain[-1]
+    new_index = last_block['index'] + 1
+    now_iso = datetime.now().isoformat()
+    
+    new_block = {
+        "index": new_index,
+        "timestamp": now_iso,
+        "type": type_,
+        "task_source": task,
+        "amount": int(amount),
+        "unlock_date": unlock_date,
+        "previous_hash": last_block['hash'],
+        "hash": ""
+    }
+    
+    new_block["hash"] = calculate_hash(
+        new_index, now_iso, type_, task, int(amount), unlock_date, last_block['hash']
+    )
+    
+    chain.append(new_block)
+
+def save_ledger(data):
+    if verify_integrity(data['chain']):
         atomic_write(BANK_FILE, data)
-        # Opcional: Acionar backup específico se desejar alta redundância
-        # run_backup_system(arquivo_alterado=BANK_FILE)
-    except Exception as e:
-        print(f"Erro crítico ao salvar banco: {e}")
+    else:
+        print("ABORTANDO SALVAMENTO: Blockchain corrompida.")
+
+# --- API PÚBLICA ---
 
 def create_transaction(task_name, min_time, actual_time):
-    """
-    Calcula e registra o depósito de horas extras.
-    Regra do Teto: O bônus máximo é igual ao tempo mínimo da tarefa.
-    """
-    try:
-        # Conversão preventiva para inteiros
-        min_time = int(min_time)
-        actual_time = int(actual_time)
-        
-        if actual_time <= min_time:
-            return False, "Sem excedente para depositar."
-        
-        excedente = actual_time - min_time
-        
-        # APLICANDO A REGRA DO TETO (CAP)
-        # Se a tarefa é 90min, o máximo que ganha é 90min, mesmo se trabalhar 500min.
-        banco_earned = min(excedente, min_time)
-        
-        if banco_earned <= 0:
-            return False, "Cálculo resultou em zero."
+    data = load_ledger()
+    if not verify_integrity(data['chain']):
+        return False, "ERRO CRÍTICO: Blockchain violada. Log de segurança gerado."
 
-        today = date.today()
-        unlock_date = today + timedelta(days=180) # 6 Meses de Carência (Lockup)
-        
-        transaction = {
-            "id": str(uuid.uuid4()),
-            "origin_date": today.isoformat(),
-            "task_source": task_name,
-            "amount_earned": banco_earned,
-            "amount_remaining": banco_earned, # Começa cheio
-            "unlock_date": unlock_date.isoformat(),
-            "status": "locked" # locked | available | depleted
-        }
-        
-        data = load_bank_data()
-        data["transactions"].append(transaction)
-        save_bank_data(data)
-        
-        return True, f"+{banco_earned} minutos depositados (Desbloqueio em {unlock_date.strftime('%d/%m/%Y')})"
-
-    except Exception as e:
-        return False, f"Erro no processamento bancário: {str(e)}"
+    min_time = int(min_time)
+    actual_time = int(actual_time)
+    excedente = actual_time - min_time
+    banco_earned = min(excedente, min_time) 
+    
+    if banco_earned <= 0: return False, "Sem excedente."
+    
+    unlock_date = (date.today() + timedelta(days=180)).isoformat()
+    
+    add_block_to_chain(data['chain'], "DEPOSIT", task_name, banco_earned, unlock_date)
+    save_ledger(data)
+    
+    return True, f"+{banco_earned}m depositados (Cadeado: 6 meses)"
 
 def get_balances():
-    """
-    Retorna o saldo consolidado.
-    LOCKED: Saldo futuro (ainda na carência).
-    AVAILABLE: Saldo líquido (carência vencida e pronto para uso).
-    """
-    data = load_bank_data()
+    data = load_ledger()
+    if not verify_integrity(data['chain']): return 0, 0
+    
     today_str = date.today().isoformat()
     
     total_locked = 0
-    total_available = 0
+    gross_available = 0
+    total_spent = 0
     
-    for t in data.get("transactions", []):
-        remaining = t.get("amount_remaining", 0)
+    for block in data['chain']:
+        if block['type'] == 'GENESIS': continue
         
-        if remaining <= 0:
-            continue
-            
-        unlock_date = t.get("unlock_date", "")
+        amt = block['amount']
         
-        if unlock_date <= today_str:
-            total_available += remaining
-            # Atualiza status visualmente se necessário, mas a lógica confia na data
-            if t.get("status") == "locked": 
-                t["status"] = "available" 
-        else:
-            total_locked += remaining
+        if block['type'] == 'DEPOSIT':
+            if block['unlock_date'] <= today_str:
+                gross_available += amt
+            else:
+                total_locked += amt
+        elif block['type'] == 'SPEND':
+            total_spent += abs(amt)
             
-    # Salva apenas para persistir eventuais mudanças de status 'locked' -> 'available'
-    save_bank_data(data)
-    
-    return total_locked, total_available
+    net_available = max(0, gross_available - total_spent)
+    return total_locked, net_available
 
 def spend_minutes(minutes_needed):
-    """
-    Lógica FIFO (First In, First Out).
-    Consome os minutos das transações disponíveis mais antigas.
-    Retorna: (Sucesso, Mensagem)
-    """
     locked, available = get_balances()
     
     if available < minutes_needed:
-        return False, f"Saldo insuficiente. Disponível: {available}m | Necessário: {minutes_needed}m"
+        return False, f"Saldo insuficiente. Tem: {available}m | Precisa: {minutes_needed}m"
         
-    data = load_bank_data()
-    today_str = date.today().isoformat()
+    data = load_ledger()
+    add_block_to_chain(data['chain'], "SPEND", "Standby Mode", -minutes_needed, date.today().isoformat())
+    save_ledger(data)
     
-    # 1. Filtra apenas as disponíveis com saldo
-    available_txs = [
-        t for t in data["transactions"] 
-        if t.get("unlock_date") <= today_str and t.get("amount_remaining", 0) > 0
-    ]
-    
-    # 2. Ordena por data de origem (Mais antigas primeiro)
-    available_txs.sort(key=lambda x: x["origin_date"])
-    
-    minutes_to_deduct = minutes_needed
-    spent_log = [] # Para registro interno ou debug
-    
-    for tx in available_txs:
-        if minutes_to_deduct <= 0:
-            break
-            
-        current_balance = tx["amount_remaining"]
-        
-        if current_balance >= minutes_to_deduct:
-            # Transação atual cobre tudo o que falta
-            tx["amount_remaining"] -= minutes_to_deduct
-            spent_log.append(f"Gasto {minutes_to_deduct}m de {tx['origin_date']}")
-            minutes_to_deduct = 0
-        else:
-            # Transação atual não cobre tudo, zera ela e passa para a próxima
-            minutes_to_deduct -= current_balance
-            spent_log.append(f"Gasto {current_balance}m de {tx['origin_date']} (Esgotada)")
-            tx["amount_remaining"] = 0
-            tx["status"] = "depleted"
-
-    save_bank_data(data)
-    return True, "Tempo resgatado com sucesso."
+    return True, "Tempo resgatado."
 
 def get_history():
-    """Retorna a lista de transações para a UI."""
-    data = load_bank_data()
-    # Retorna invertido (mais novas no topo)
-    return list(reversed(data.get("transactions", [])))
+    data = load_ledger()
+    chain = data['chain']
+    
+    if not verify_integrity(chain): return []
+
+    today_str = date.today().isoformat()
+    total_spent_history = sum(abs(b['amount']) for b in chain if b['type'] == 'SPEND')
+    
+    view_list = []
+    deposits = [b for b in chain if b['type'] == 'DEPOSIT']
+    
+    remaining_debt = total_spent_history
+    
+    for block in deposits:
+        original_amount = block['amount']
+        current_remaining = original_amount
+        
+        if block['unlock_date'] <= today_str:
+            if remaining_debt > 0:
+                deduction = min(remaining_debt, original_amount)
+                current_remaining -= deduction
+                remaining_debt -= deduction
+        
+        view_obj = {
+            "origin_date": block['timestamp'][:10],
+            "task_source": block['task_source'],
+            "amount_earned": original_amount,
+            "amount_remaining": current_remaining,
+            "unlock_date": block['unlock_date'],
+            "status": "locked" if block['unlock_date'] > today_str else "available"
+        }
+        view_list.append(view_obj)
+        
+    return list(reversed(view_list))
