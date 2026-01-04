@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
+from bank_manager import get_balances, spend_minutes
 
 # --- Configurações Básicas e Helpers ---
 
@@ -152,6 +153,17 @@ class SetupWindow:
         self.entry_task.pack(fill=tk.X, pady=(5, 20), ipady=3)
         self.entry_task.focus()
         log_event("entry_task", f"Usuário definiu a tarefa: {self.entry_task.get()}")
+
+        # [NOVO] Botão de Lazer (Banco de Horas)
+        # Só aparece se tiver saldo disponível suficiente (30m)
+        locked, available = get_balances()
+        if available >= 30: 
+            # Calcula cor baseada no saldo (verde escuro = rico)
+            btn_leisure = tk.Button(frame, text=f"Gastar tempo extra ({available}min disponíveis)", 
+                                    font=("Segoe UI", 10, "bold"), 
+                                    bg="#2E7D32", fg="white", activebackground="#1B5E20", activeforeground="white",
+                                    command=self.on_leisure_start, relief=tk.FLAT, cursor="hand2")
+            btn_leisure.pack(fill=tk.X, pady=(10, 5), ipady=5)
         
         # 4. Botões
         btn_start = tk.Button(frame, text="ASSINAR E INICIAR", font=("Segoe UI", 11, "bold"), 
@@ -196,6 +208,41 @@ class SetupWindow:
 
     def run(self):
         self.root.mainloop()
+
+    def on_leisure_start(self):
+        time_str = self.combo_time.get()
+        minutes = 30 if "30" in time_str else 60
+        
+        locked, available = get_balances()
+        
+        if available < minutes:
+            messagebox.showerror("Saldo Insuficiente", f"Você quer {minutes}m, mas só tem {available}m desbloqueados.")
+            return
+
+        # Confirmação do Gasto
+        if not messagebox.askyesno("Confirmar Lazer", 
+            f"Isso vai descontar {minutes} minutos do seu Banco de Horas.\n\n"
+            "O Daemon não vai te fiscalizar durante esse tempo.\n"
+            "Deseja iniciar?"):
+            return
+
+        # Efetua o débito
+        success, msg = spend_minutes(minutes)
+        if not success:
+            messagebox.showerror("Erro", msg)
+            return
+
+        # Ativa modo estudo, mas com flag de lazer
+        config = load_config_data()
+        config['study_mode'] = True
+        config['session_type'] = 'leisure' # <--- FLAG IMPORTANTE
+        save_config_data(config)
+        
+        log_event("leisure_mode_on", f"Sessão de lazer iniciada: -{minutes}m")
+        
+        self.root.destroy()
+        # Inicia o overlay com título diferente
+        start_overlay(minutes, "Sessão de Lazer (Banco de Horas)")
 
 # --- CLASSE DO OVERLAY (A Execução) ---
 
@@ -286,42 +333,57 @@ class OverlayWindow:
             self.on_give_up()
 
     def run_logic(self):
+        # [MODIFICADO] Verifica se é lazer
+        config = load_config_data()
+        is_leisure = (config.get('session_type') == 'leisure')
+
         total_seconds = self.minutes * 60
-        num_popups = 3 if self.minutes == 30 else 4
         
-        # Gera momentos aleatórios para os popups
-        # Divide o tempo em 'slots' para garantir distribuição
+        # Se for LAZER, mudamos o comportamento:
+        # 1. Muda o visual para verde
+        # 2. NÃO agenda popups de fiscalização
+        
+        if is_leisure:
+            try:
+                # Feedback visual relaxante
+                self.root.after(0, lambda: self.lbl_task.config(text="APROVEITE SEU DESCANSO", fg="#4CAF50"))
+            except: pass
+            
+            start_time = time.time()
+            while self.running:
+                elapsed = time.time() - start_time
+                if elapsed >= total_seconds:
+                    self.running = False
+                    self.root.after(0, self.time_expired)
+                    break
+                time.sleep(1)
+            # SAI DA FUNÇÃO AQUI. Não executa a lógica de popups abaixo.
+            return 
+
+        # --- LÓGICA PADRÃO (MODO ESTUDO) ---
+        num_popups = 3 if self.minutes == 30 else 4
         slot_size = total_seconds // num_popups
         popup_times = []
         for i in range(num_popups):
-            # Escolhe um segundo aleatório dentro do slot
-            # Slot 1: 0 a X, Slot 2: X a 2X...
             min_sec = i * slot_size
-            max_sec = (i + 1) * slot_size - 60 # -60s de margem
+            max_sec = (i + 1) * slot_size - 60 
             if max_sec <= min_sec: max_sec = min_sec + 10
-            
-            trigger_at = random.randint(min_sec + 60, max_sec) # +60s para não ser imediato
+            trigger_at = random.randint(min_sec + 60, max_sec)
             popup_times.append(trigger_at)
         
         start_time = time.time()
-        
         while self.running:
             elapsed = time.time() - start_time
-            
-            # Se acabou o tempo
             if elapsed >= total_seconds:
                 self.running = False
                 self.root.after(0, self.time_expired)
                 break
             
-            # Checa se é hora de um popup
-            # Margem de erro de 1s para o loop pegar
             for pt in popup_times:
                 if abs(elapsed - pt) < 1.5:
                     self.root.after(0, self.trigger_popup)
-                    popup_times.remove(pt) # Remove para não triggar de novo
+                    popup_times.remove(pt)
                     break
-            
             time.sleep(1)
 
     def trigger_popup(self):

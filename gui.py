@@ -268,7 +268,7 @@ class App:
             
             # Validação: Cumpriu a meta de hoje?
             if actual_minutes < effective_min_minutes:
-                messagebox.showerror("Falha de Disciplina", f"Você fez {actual_minutes}m. A meta de hoje era {effective_min_minutes}m.\nComplete o tempo antes de marcar.")
+                messagebox.showerror("Falha de Disciplina", f"Você fez {actual_minutes}min. A meta de hoje era {effective_min_minutes}min.\nComplete o tempo antes de marcar.")
                 return False
                 
             # --- BANCO DE HORAS (INTEGRAÇÃO) ---

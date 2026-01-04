@@ -295,6 +295,8 @@ class IdentityRejectionSystem:
     def check_initial_focus_popup(self):
         """Exibe o popup de descanso se for a primeira vez rodando hoje."""
         try:
+            if self.config.get('study_mode', False): 
+                return
             # 1. Se já completou tudo, não perturba
             if self.all_tasks_completed(): return
 
