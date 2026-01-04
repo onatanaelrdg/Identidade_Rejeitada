@@ -626,7 +626,7 @@ class App:
             if tag == "locked":
                 status_txt = f"🔒 {unlock_fmt}"
 
-            vals = (origin_fmt, task, f"+{earned}m", f"{remain}m", status_txt)
+            vals = (origin_fmt, task, f"+{earned}min", f"{remain}min", status_txt)
             tree.insert("", tk.END, values=vals, tags=(tag,))
 
         # Botão Fechar

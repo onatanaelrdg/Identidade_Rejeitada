@@ -159,7 +159,7 @@ class SetupWindow:
         locked, available = get_balances()
         if available >= 30: 
             # Calcula cor baseada no saldo (verde escuro = rico)
-            btn_leisure = tk.Button(frame, text=f"Gastar tempo extra ({available}min disponíveis)", 
+            btn_leisure = tk.Button(frame, text=f"Entrar em modo Standby ({available}min disponíveis)", 
                                     font=("Segoe UI", 10, "bold"), 
                                     bg="#2E7D32", fg="white", activebackground="#1B5E20", activeforeground="white",
                                     command=self.on_leisure_start, relief=tk.FLAT, cursor="hand2")
@@ -220,9 +220,9 @@ class SetupWindow:
             return
 
         # Confirmação do Gasto
-        if not messagebox.askyesno("Confirmar Lazer", 
+        if not messagebox.askyesno("Confirmar Standby", 
             f"Isso vai descontar {minutes} minutos do seu Banco de Horas.\n\n"
-            "O Daemon não vai te fiscalizar durante esse tempo.\n"
+            "O IRS não vai te fiscalizar durante esse tempo.\n"
             "Deseja iniciar?"):
             return
 
@@ -235,14 +235,14 @@ class SetupWindow:
         # Ativa modo estudo, mas com flag de lazer
         config = load_config_data()
         config['study_mode'] = True
-        config['session_type'] = 'leisure' # <--- FLAG IMPORTANTE
+        config['session_type'] = 'standby'
         save_config_data(config)
         
-        log_event("leisure_mode_on", f"Sessão de lazer iniciada: -{minutes}m")
+        log_event("standby_mode_on", f"Sessão de Standby iniciada: -{minutes}m")
         
         self.root.destroy()
         # Inicia o overlay com título diferente
-        start_overlay(minutes, "Sessão de Lazer (Banco de Horas)")
+        start_overlay(minutes, "Sessão de Standby")
 
 # --- CLASSE DO OVERLAY (A Execução) ---
 
@@ -335,7 +335,7 @@ class OverlayWindow:
     def run_logic(self):
         # [MODIFICADO] Verifica se é lazer
         config = load_config_data()
-        is_leisure = (config.get('session_type') == 'leisure')
+        is_standby = (config.get('session_type') == 'standby')
 
         total_seconds = self.minutes * 60
         
@@ -343,10 +343,10 @@ class OverlayWindow:
         # 1. Muda o visual para verde
         # 2. NÃO agenda popups de fiscalização
         
-        if is_leisure:
+        if is_standby:
             try:
                 # Feedback visual relaxante
-                self.root.after(0, lambda: self.lbl_task.config(text="APROVEITE SEU DESCANSO", fg="#4CAF50"))
+                self.root.after(0, lambda: self.lbl_task.config(text="MODO STANDBY: AGUARDANDO RETORNO", fg="#4CAF50"))
             except: pass
             
             start_time = time.time()
