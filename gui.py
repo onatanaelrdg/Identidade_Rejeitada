@@ -23,6 +23,8 @@ from core import (
     sign_date, verify_and_get_date
 )
 from daemon import show_standalone_popup
+# --- NOVO: Integração com o Banco de Horas ---
+from bank_manager import create_transaction
 
 class App:
     def __init__(self, root):
@@ -91,7 +93,6 @@ class App:
                 f = ttk.Frame(self.scrollable_frame, padding=5)
                 f.pack(fill=tk.X, pady=2)
                 
-                # Verifica se a data salva tem a assinatura correta
                 raw_completed = task.get('completed_on')
                 valid_date = verify_and_get_date(raw_completed) 
                 is_completed = (valid_date == today_str)
@@ -107,24 +108,20 @@ class App:
                 self.task_widgets[task_id] = {'var': var, 'cb': cb}
 
     def show_celebration_popup(self):
-        """Exibe popup verde, toca áudio calmo e parabeniza."""
         win = tk.Toplevel(self.root)
         win.title("DIA CONCLUÍDO")
         center_window(win, 500, 250)
         win.transient(self.root)
         win.grab_set()
         
-        # Configuração Visual: Verde Sereno
-        bg_color = "#1B5E20" # Verde escuro elegante
+        bg_color = "#1B5E20"
         fg_color = "#FFFFFF"
         win.configure(bg=bg_color)
         
-        # Escolhe frase
         config = load_config_data()
         phrases = config.get('celebrations', ["Parabéns pelo foco."])
         phrase = random.choice(phrases)
         
-        # Layout
         frame = tk.Frame(win, bg=bg_color, padx=20, pady=20)
         frame.pack(fill=tk.BOTH, expand=True)
         
@@ -134,7 +131,6 @@ class App:
         tk.Label(frame, text=phrase, font=("Segoe UI", 12), 
                  bg=bg_color, fg=fg_color, wraplength=450, justify=tk.CENTER).pack(pady=(0, 20))
         
-        # Botão Fechar
         tk.Button(frame, text="FECHAR", font=("Segoe UI", 10, "bold"),
                   bg="#2E7D32", fg="white", relief=tk.FLAT, padx=20, pady=8, cursor="hand2",
                   command=win.destroy).pack()
@@ -149,7 +145,6 @@ class App:
             ptype, pdata = self.get_proof(task)
             
             if pdata:
-                # Assina a data de hoje antes de salvar
                 signed_today = sign_date(date.today().isoformat())
                 task['completed_on'] = signed_today
                 
@@ -159,26 +154,25 @@ class App:
                 log_event("task_completed", f"{task_id}: {task['name']}", category="history")
                 self.update_task_list()
                 
-                # Verifica se TUDO foi concluído (agora checando hashes)
                 tasks_for_today = get_tasks_for_today()
                 all_done = True
                 if not tasks_for_today: all_done = False
                 
                 for t in tasks_for_today.values():
-                    # Verifica hash de cada tarefa
                     v_date = verify_and_get_date(t.get('completed_on'))
                     if v_date != date.today().isoformat(): 
                         all_done = False; break
                 
                 if all_done:
-                    # Assina a data geral também, por segurança
                     self.config_data['last_completion_date'] = date.today().isoformat()
                     save_config_data(self.config_data)
                     self.show_celebration_popup()
             else: var.set(False)
 
     def get_proof(self, task):
-        """Janela de prova com validação de Tempo, Flex e Passe Livre."""
+        """
+        Janela de prova com Validação Numérica e Integração com Banco de Horas.
+        """
         task_name = task.get('name', 'Tarefa')
         
         # --- LÓGICA FLEX ---
@@ -186,24 +180,28 @@ class App:
         econ = cfg.get('economy', {})
         is_flex_day = (econ.get('flex_active_date') == date.today().isoformat())
         
-        raw_min_val = task.get('min_time_val', '')
+        # Dados do Contrato Original
+        raw_min_val = task.get('min_time_val', '0')
         raw_min_unit = task.get('min_time_unit', 'minutos')
         
-        validation_str = None
-        is_time_check_required = False
+        # 1. Converte o tempo mínimo original para minutos (base para o Banco)
+        try:
+            original_min_minutes = int(raw_min_val)
+            if raw_min_unit == 'horas':
+                original_min_minutes *= 60
+        except:
+            original_min_minutes = 0
+
+        # 2. Define o tempo exigido para passar HOJE (base para Validação)
+        effective_min_minutes = original_min_minutes
         
-        if raw_min_val:
-            is_time_check_required = True
-            if is_flex_day:
-                # Se for dia Flex, o alvo vira "15 minutos"
-                # (A menos que a tarefa fosse menor que 15, mas assumimos que disciplina é > 15)
-                validation_str = "15 minutos"
-            else:
-                validation_str = f"{raw_min_val} {raw_min_unit}"
+        if is_flex_day and original_min_minutes > 15:
+            # No modo Flex, o mínimo para passar cai para 15 (ou mantém se for menor)
+            effective_min_minutes = 15
 
         win = tk.Toplevel(self.root)
         win.title(f"Prova: {task_name}")
-        center_window(win, 450, 450)
+        center_window(win, 450, 480)
         win.transient(self.root)
         win.grab_set()
         
@@ -211,22 +209,29 @@ class App:
         frame.pack(fill=tk.BOTH, expand=True)
 
         if is_flex_day:
-            tk.Label(frame, text="⚡ MODO FLEX ATIVO: Tempo reduzido.", fg="#00CCFF", bg="#2E2E2E").pack(fill=tk.X)
+            tk.Label(frame, text="⚡ MODO FLEX ATIVO: Meta reduzida para 15 min.", fg="#00CCFF", bg="#2E2E2E").pack(fill=tk.X, pady=(0, 10))
 
-        # --- SEÇÃO DE VALIDAÇÃO DE TEMPO ---
+        # --- SEÇÃO DE INPUT (OBRIGATÓRIO SE TIVER MIN TIME) ---
         time_entry = None
-        if is_time_check_required:
-            val_frame = tk.LabelFrame(frame, text="Verificação de Tempo", padx=10, pady=10)
+        is_time_tracking = (original_min_minutes > 0)
+        
+        if is_time_tracking:
+            val_frame = tk.LabelFrame(frame, text="Registro de Tempo", padx=10, pady=10)
             val_frame.pack(fill=tk.X, pady=(0, 15))
             
-            ttk.Label(val_frame, text=f"Tempo Exigido: {validation_str}", font=("Segoe UI", 10, "bold"), foreground="#FFCC00").pack(anchor=tk.W)
+            # Texto explicativo da meta
+            meta_texto = f"{effective_min_minutes} minutos"
+            ttk.Label(val_frame, text=f"Meta de Hoje: {meta_texto}", font=("Segoe UI", 10, "bold"), foreground="#FFCC00").pack(anchor=tk.W)
             
             row = tk.Frame(val_frame)
             row.pack(fill=tk.X, pady=(5, 0))
-            ttk.Label(row, text="Tempo realizado:").pack(side=tk.LEFT)
-            time_entry = ttk.Entry(row)
-            time_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            ttk.Label(val_frame, text="(Digite 'Passe Livre' para usar um passe)", font=("Segoe UI", 8, "italic")).pack(anchor=tk.W)
+            ttk.Label(row, text="Tempo Realizado (min):").pack(side=tk.LEFT)
+            
+            # Campo Numérico
+            time_entry = ttk.Entry(row, width=10)
+            time_entry.pack(side=tk.LEFT, padx=5)
+            
+            ttk.Label(val_frame, text="(Ou digite 'Passe Livre')", font=("Segoe UI", 8, "italic")).pack(anchor=tk.W)
 
         # --- SEÇÃO DE PROVA ---
         ttk.Label(frame, text="Descreva o que foi feito:").pack(anchor=tk.W)
@@ -236,7 +241,7 @@ class App:
         res = {"t": None, "d": None}
         
         def check_validation():
-            if not is_time_check_required: return True
+            if not is_time_tracking: return True
             
             user_input = time_entry.get().strip()
             
@@ -249,40 +254,54 @@ class App:
                         cfg['economy'] = econ
                         save_config_data(cfg)
                         log_event("PASS_USED", f"Usou passe na tarefa: {task_name}", category="history")
-                        return "PASS" # Código especial
+                        return "PASS"
                 else:
                     messagebox.showerror("Impostor", "Você não tem Passes Livres.")
                     return False
 
-            # Validação Normal
-            if user_input != validation_str:
-                messagebox.showerror("Falha", f"Você deve digitar exatamente: '{validation_str}'")
+            # Validação Numérica
+            try:
+                actual_minutes = int(user_input)
+            except ValueError:
+                messagebox.showerror("Erro", "Digite apenas números para os minutos (ex: 90).")
                 return False
+            
+            # Validação: Cumpriu a meta de hoje?
+            if actual_minutes < effective_min_minutes:
+                messagebox.showerror("Falha de Disciplina", f"Você fez {actual_minutes}m. A meta de hoje era {effective_min_minutes}m.\nComplete o tempo antes de marcar.")
+                return False
+                
+            # --- BANCO DE HORAS (INTEGRAÇÃO) ---
+            # Só tenta depositar se passou na validação básica.
+            # IMPORTANTE: Passamos o `original_min_minutes` para o cálculo do bônus.
+            # Se estiver em modo Flex, `original` continua sendo 90 (exemplo).
+            # Se você fez 100m no dia Flex (meta 15), o excedente para banco é 100 - 90 = 10.
+            # Isso evita que o modo Flex gere banco fácil.
+            success, msg = create_transaction(task_name, original_min_minutes, actual_minutes)
+            
+            if success:
+                # Feedback de depósito positivo
+                messagebox.showinfo("Banco de Horas", msg)
+                
             return True
 
         def save_txt():
             valid = check_validation()
             if not valid: return
             
-            # Se usou passe, o texto pode ser vazio
             d = entry.get("1.0", tk.END).strip()
-            if valid == "PASS":
-                d = "CONCLUÍDO COM PASSE LIVRE 🎫"
+            if valid == "PASS": d = "CONCLUÍDO COM PASSE LIVRE 🎫"
             
             if d:
                 res["t"] = "text"; res["d"] = d
                 win.destroy()
-            else:
-                messagebox.showwarning("Vazio", "Escreva algo.")
+            else: messagebox.showwarning("Vazio", "Escreva algo.")
 
         def save_img():
             valid = check_validation()
             if not valid: return
             if valid == "PASS":
-                messagebox.showinfo("Info", "Passe Livre não requer imagem. Salvando como texto.")
-                res["t"] = "text"; res["d"] = "CONCLUÍDO COM PASSE LIVRE 🎫"
-                win.destroy()
-                return
+                messagebox.showinfo("Info", "Passe Livre não requer imagem."); res["t"] = "text"; res["d"] = "CONCLUÍDO COM PASSE LIVRE 🎫"; win.destroy(); return
 
             fp = filedialog.askopenfilename(filetypes=[("Imagens", "*.png *.jpg")])
             if fp:
@@ -328,7 +347,6 @@ class App:
         streak = econ.get('streak_progress', 0)
         pending_trade = econ.get('pending_trade', False)
 
-        # --- VERIFICAÇÃO EM TEMPO REAL ---
         today_tasks = get_tasks_for_today()
         all_done_today = True
         if not today_tasks: 
@@ -348,49 +366,34 @@ class App:
              if econ.get('flex_active_date') != today_str:
                  streak_display = f"{streak} (+1 ⏳)/10"
 
-        # --- DASHBOARD VISUAL (GRID NATIVO) ---
-        # Substitui o ASCII Art por um Frame estruturado
-        
-        # Container com borda sutil
         dash_frame = tk.Frame(win, bg="#1E1E1E", highlightbackground="#333333", highlightthickness=2)
         dash_frame.pack(pady=20, padx=40, fill=tk.X)
 
-        # Título da Caixa
         tk.Label(dash_frame, text="RECURSOS DISPONÍVEIS", font=("Segoe UI", 10, "bold"), 
                  bg="#1E1E1E", fg="#666666", pady=10).pack(fill=tk.X)
 
-        # Grid interno para alinhamento perfeito
         grid_frame = tk.Frame(dash_frame, bg="#1E1E1E")
         grid_frame.pack(fill=tk.X, padx=20, pady=(0, 20))
 
-        # Coluna 1 expande para empurrar o valor para a direita
         grid_frame.columnconfigure(1, weight=1)
 
         def add_stat_row(row, icon, title, value, color):
-            # Ícone (AGORA COM A COR CORRETA: fg=color)
             tk.Label(grid_frame, text=icon, font=("Segoe UI", 16), 
                      bg="#1E1E1E", fg=color).grid(row=row, column=0, padx=(0, 10), pady=5)
-            
-            # Título (Cinza claro padrão)
             tk.Label(grid_frame, text=title, font=("Segoe UI", 12), 
                      bg="#1E1E1E", fg="#E0E0E0").grid(row=row, column=1, sticky="w")
-            
-            # Valor (Colorido)
             tk.Label(grid_frame, text=value, font=("Consolas", 14, "bold"), 
                      bg="#1E1E1E", fg=color).grid(row=row, column=2, sticky="e")
 
-        # Adiciona as linhas (com cores temáticas)
-        add_stat_row(0, "💎", "Créditos Flex", f"{num_credits}/4", "#00CCFF") # Azul Neon
-        add_stat_row(1, "🎫", "Passes Livres", f"{passes}", "#FFD700")     # Dourado
-        add_stat_row(2, "🔥", "Streak Mérito", streak_display, "#FF4444")  # Vermelho Fogo
+        add_stat_row(0, "💎", "Créditos Flex", f"{num_credits}/4", "#00CCFF") 
+        add_stat_row(1, "🎫", "Passes Livres", f"{passes}", "#FFD700")     
+        add_stat_row(2, "🔥", "Streak Mérito", streak_display, "#FF4444")  
 
-        # Aviso de +1 pendente
         if "(+1 ⏳)" in streak_display:
             lbl_info = tk.Label(win, text="* Progresso de hoje será confirmado amanhã.", 
                                 font=("Segoe UI", 8, "italic"), bg="#1E1E1E", fg="#666666")
             lbl_info.pack(pady=(0, 10))
 
-        # --- LISTA DE VALIDADE ---
         frame_list = tk.Frame(win, bg="#1E1E1E")
         frame_list.pack(fill=tk.X, padx=40)
         
@@ -404,17 +407,13 @@ class App:
             for c in credits_list:
                 exp = date.fromisoformat(c['expires_at'])
                 days_left = (exp - today).days
-                
-                # Formatação visual da validade
                 color = "#FF4444" if days_left < 7 else "#AAAAAA"
                 txt = f"• 1 Crédito expira em {days_left} dias"
-                
                 row = tk.Frame(frame_list, bg="#1E1E1E")
                 row.pack(fill=tk.X)
                 tk.Label(row, text=txt, bg="#1E1E1E", fg=color, font=("Segoe UI", 10)).pack(side=tk.LEFT)
                 tk.Label(row, text=f"({c['expires_at']})", bg="#1E1E1E", fg="#444", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=5)
 
-        # --- ÁREA DE AÇÃO ---
         frame_actions = tk.Frame(win, bg="#1E1E1E", pady=20)
         frame_actions.pack(fill=tk.X, padx=40)
 
@@ -426,26 +425,21 @@ class App:
                 messagebox.showerror("Saldo Insuficiente", "Você precisa de pelo menos 1 💎.")
                 return
             
-            # --- MODAL DE CHECKOUT (SUBSTITUI O MESSAGEBOX) ---
             checkout = tk.Toplevel(win)
             checkout.title("CONFIRMAR TRANSAÇÃO")
             center_window(checkout, 450, 380)
             checkout.transient(win)
             checkout.grab_set()
-            checkout.configure(bg="#151515") # Fundo um pouco mais escuro para destaque
+            checkout.configure(bg="#151515") 
             
-            # Borda Ciano para indicar que é sobre Flex
             main_frame = tk.Frame(checkout, bg="#1E1E1E", highlightbackground="#00CCFF", highlightthickness=2)
             main_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-            # Cabeçalho
             tk.Label(main_frame, text="💎", font=("Segoe UI", 40), 
                      bg="#1E1E1E", fg="#00CCFF").pack(pady=(20, 0))
-            
             tk.Label(main_frame, text="ATIVAR MODO FLEX", font=("Impact", 18), 
                      bg="#1E1E1E", fg="#FFFFFF").pack(pady=(5, 15))
 
-            # Caixa de Regras
             rules_frame = tk.Frame(main_frame, bg="#252525", padx=15, pady=15)
             rules_frame.pack(fill=tk.X, padx=30)
             
@@ -464,27 +458,22 @@ class App:
                 tk.Label(row, text=desc, font=("Segoe UI", 9, "bold"), 
                          bg="#252525", fg=color).pack(side=tk.LEFT)
 
-            # Variável de resposta
             result = {"confirm": False}
 
             def on_pay():
                 result["confirm"] = True
                 checkout.destroy()
-            
             def on_cancel():
                 checkout.destroy()
 
-            # Botões de Ação
             btn_frame = tk.Frame(main_frame, bg="#1E1E1E", pady=20)
             btn_frame.pack(fill=tk.X, padx=30)
 
-            # Botão PAGAR (Estilo Neon)
             btn_pay = tk.Button(btn_frame, text="PAGAR 1 💎", font=("Segoe UI", 11, "bold"),
                                 bg="#00CCFF", fg="#000000", relief=tk.FLAT, cursor="hand2",
                                 command=on_pay)
             btn_pay.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
-            # Botão CANCELAR (Estilo Muted)
             btn_cancel = tk.Button(btn_frame, text="CANCELAR", font=("Segoe UI", 11),
                                    bg="#333333", fg="#FFFFFF", relief=tk.FLAT, cursor="hand2",
                                    command=on_cancel)
@@ -492,18 +481,13 @@ class App:
 
             win.wait_window(checkout)
             
-            # --- PROCESSAMENTO DA COMPRA ---
             if result["confirm"]:
-                # Consome o crédito mais antigo (FIFO)
                 econ['flex_credits'].pop(0)
                 econ['flex_active_date'] = today_str
-                
                 cfg['economy'] = econ
                 save_config_data(cfg)
-                
                 log_event("FLEX_ACTIVATED", "Modo Flex ativado (-1 crédito).", category="history")
-                
-                win.destroy() # Fecha a loja
+                win.destroy() 
                 messagebox.showinfo("Transação Aprovada", "Modo Flex ATIVADO.\nRespire fundo e faça o mínimo hoje.")
 
         btn_flex = tk.Button(frame_actions, text="USAR FLEXIBILIDADE (-1 💎)", 
@@ -541,10 +525,6 @@ class App:
         if not cfg['rejections']: return
         rej = self.tasks.get('rejections', ["Teste"])[0] if not cfg['rejections'] else cfg['rejections'][0]
         set_system_volume(80)
-        
-        # Gambiarra rápida para testar usando a lógica do subprocess que já temos, ou simplificar:
-        # Para manter simples, vou chamar o powershell direto aqui também ou importar do daemon se fosse static
-        # Mas como movemos para daemon, vamos replicar simples:
         try:
             tts = cfg.get('tts_speed', 2)
             if IS_WINDOWS:
@@ -575,11 +555,9 @@ class App:
         manager_win.transient(self.root)
         manager_win.grab_set()
         
-        # Estilo e Frame
         frame = ttk.Frame(manager_win, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # Treeview
         columns = ("Nome", "Agenda")
         tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
         tree.heading("Nome", text="Nome da Tarefa")
@@ -599,7 +577,6 @@ class App:
             dias_sem = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
             
             for tid, t in cfg.get('tasks', {}).items():
-                # Só mostra as ativas (em progresso)
                 if t.get('status', 'em progresso') == 'em progresso':
                     if t.get('schedule_type') == 'daily':
                         sched = "Todos os dias"
@@ -610,7 +587,6 @@ class App:
 
         populate()
 
-        # Botões
         btn_frame = ttk.Frame(manager_win, padding=(10, 10))
         btn_frame.pack(fill=tk.X)
 
@@ -618,24 +594,18 @@ class App:
             sel = tree.selection()
             if not sel: return
             task_id = sel[0]
-            # Abre o editor passando o ID da tarefa existente
             self.open_task_editor(parent=manager_win, task_id=task_id, callback=lambda: [populate(), self.update_task_list()])
 
         def create_new():
-            # Abre o editor sem ID (modo criação)
             self.open_task_editor(parent=manager_win, task_id=None, callback=lambda: [populate(), self.update_task_list()])
 
         def open_archives():
-            # Abre a nova janela de arquivados
             self.open_archived_manager(manager_win)
-            # Atualiza esta lista quando voltar, caso tenha desarquivado algo
             populate()
             self.update_task_list()
 
         ttk.Button(btn_frame, text="Nova Tarefa", command=create_new).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Editar Selecionada", command=edit_selected).pack(side=tk.LEFT, padx=5)
-        
-        # Botão de Arquivados (Fica na direita, cor diferente se possível, mas padrão aqui)
         ttk.Button(btn_frame, text="Ver Arquivados 📂", command=open_archives).pack(side=tk.RIGHT, padx=5)
 
     def open_archived_manager(self, parent):
@@ -674,7 +644,6 @@ class App:
         def edit_restore():
             sel = tree.selection()
             if not sel: return
-            # Abre o mesmo editor, permitindo desmarcar "Arquivado"
             self.open_task_editor(parent=arch_win, task_id=sel[0], callback=lambda: [populate_archived(), self.update_task_list()])
 
         ttk.Button(btn_frame, text="Editar / Restaurar", command=edit_restore).pack(fill=tk.X)
@@ -711,13 +680,12 @@ class App:
         self.root.quit(); sys.exit()
 
     def open_task_editor(self, parent, task_id=None, callback=None):
-        """Janela unificada com Trava de 7 dias, Hash e Horário Fixo."""
         is_edit = task_id is not None
         title = "Editar Tarefa" if is_edit else "Nova Tarefa"
         
         win = tk.Toplevel(parent)
         win.title(title)
-        center_window(win, 450, 550) # Aumentei altura
+        center_window(win, 450, 550) 
         win.transient(parent)
         win.grab_set()
         
@@ -727,14 +695,12 @@ class App:
         frame = ttk.Frame(win, padding=15)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # 1. Nome
         ttk.Label(frame, text="Nome da Tarefa:").pack(anchor=tk.W)
         name_entry = ttk.Entry(frame)
         name_entry.pack(fill=tk.X, pady=(0, 10))
         if is_edit: name_entry.insert(0, task_data.get('name', ''))
         else: name_entry.focus()
 
-        # 2. Tempo Mínimo Diário
         ttk.Label(frame, text="Tempo Mínimo Diário:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(5, 0))
         time_frame = ttk.Frame(frame)
         time_frame.pack(fill=tk.X, pady=(0, 10))
@@ -747,7 +713,6 @@ class App:
         ttk.Radiobutton(time_frame, text="Minutos", variable=time_unit, value="minutos").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(time_frame, text="Horas", variable=time_unit, value="horas").pack(side=tk.LEFT, padx=5)
 
-        # Lógica de Trava (Hash)
         raw_last_set = task_data.get('min_time_last_set', None)
         valid_date_str = verify_and_get_date(raw_last_set)
         tampered = False
@@ -775,7 +740,6 @@ class App:
             if tampered: lock_msg += " (PENALIDADE)"
             ttk.Label(frame, text=lock_msg, foreground="#FF4444", font=("Segoe UI", 8, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
-        # 3. Horário Fixo (NOVO)
         ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         ttk.Label(frame, text="Horário Fixo de Início (Opcional):", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         ttk.Label(frame, text="Formato HH:MM (Ex: 14:30). Deixe vazio se não usar.", font=("Segoe UI", 8), foreground="#888").pack(anchor=tk.W)
@@ -784,7 +748,6 @@ class App:
         fixed_time_entry = ttk.Entry(frame, textvariable=fixed_time_var, width=10)
         fixed_time_entry.pack(anchor=tk.W, pady=(0, 10))
 
-        # 4. Agenda
         ttk.Label(frame, text="Frequência:", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         sched_var = tk.StringVar(value=task_data.get('schedule_type', 'daily'))
         days_frame = ttk.Frame(frame, padding=(10, 5))
@@ -805,13 +768,11 @@ class App:
             dias_vars.append(dv)
         toggle_days()
 
-        # 5. Checkbox Arquivar
         ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
         is_archived = (task_data.get('status') == 'encerrado')
         archive_var = tk.BooleanVar(value=is_archived)
         ttk.Checkbutton(frame, text="Arquivar (Inativar Tarefa)", variable=archive_var).pack(anchor=tk.W, pady=5)
 
-        # --- Lógica de Salvar ---
         def pre_save_check():
             name = name_entry.get().strip()
             val_str = time_val.get().strip()
@@ -821,7 +782,6 @@ class App:
                 messagebox.showerror("Erro", "Nome da tarefa é obrigatório.", parent=win)
                 return
             
-            # Validação simples de HH:MM
             if fixed_time:
                 try:
                     time.strptime(fixed_time, "%H:%M")
@@ -868,7 +828,7 @@ class App:
                 "min_time_val": current_time_val,
                 "min_time_unit": current_time_unit,
                 "min_time_last_set": final_signed_date,
-                "fixed_start_time": fixed_time_var.get().strip() # <--- SALVA O HORÁRIO
+                "fixed_start_time": fixed_time_var.get().strip()
             }
             
             cfg = load_config_data()
@@ -880,7 +840,6 @@ class App:
         ttk.Button(frame, text="Salvar Alterações", command=pre_save_check).pack(fill=tk.X, pady=10)
         
     def check_dreamer_vs_doer(self, parent, val, unit):
-        """Janela Modal: Sonhador vs Realizador."""
         alert_win = tk.Toplevel(parent)
         alert_win.title("SONHADOR x REALIZADOR")
         center_window(alert_win, 500, 300)
@@ -888,13 +847,9 @@ class App:
         alert_win.grab_set()
         alert_win.configure(bg="#1A1A1A")
         
-        # Remove a barra de título padrão para forçar foco no conteúdo (opcional, mas fica mais agressivo)
-        # alert_win.overrideredirect(True) 
-        
         container = tk.Frame(alert_win, bg="#1A1A1A", padx=20, pady=20)
         container.pack(fill=tk.BOTH, expand=True)
         
-        # Título
         tk.Label(container, text="⚠️ SONHADOR x REALIZADOR", font=("Impact", 18), 
                  fg="#FFCC00", bg="#1A1A1A").pack(pady=(0, 15))
         
@@ -919,13 +874,11 @@ class App:
         btn_frame = tk.Frame(container, bg="#1A1A1A")
         btn_frame.pack(fill=tk.X)
         
-        # Botão Comprometer (Agora o Principal: Verde e na Esquerda)
         btn_commit = tk.Button(btn_frame, text="ME COMPROMETO\n(Minha decisão)", font=("Segoe UI", 10, "bold"),
                                bg="#4CAF50", fg="white", relief=tk.FLAT, padx=10, pady=5,
                                command=on_commit, cursor="hand2")
         btn_commit.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
 
-        # Botão Re-analisar (Agora Secundário: Azul e na Direita)
         btn_rethink = tk.Button(btn_frame, text=f"RE-ANALISAR TEMPO\n({val} {unit})", font=("Segoe UI", 10),
                                 bg="#007ACC", fg="white", relief=tk.FLAT, padx=10, pady=5,
                                 command=on_rethink, cursor="hand2")
