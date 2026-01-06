@@ -277,6 +277,7 @@ class SetupWindow:
         """Ativa o modo estudo no arquivo de configuração."""
         config = load_config_data()
         config['study_mode'] = True
+        config['session_type'] = 'focus' 
         save_config_data(config)
         log_event("study_mode_on", "Modo Estudo/Trabalho ativado (via GUI).")
 
@@ -400,6 +401,9 @@ class OverlayWindow:
         self.root.bind("<ButtonRelease-1>", self.stop_move)
         self.root.bind("<B1-Motion>", self.do_move)
 
+        # Variável para rastrear o início real
+        self.start_time = None
+
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam') # Clam permite mais customização de cor
@@ -456,15 +460,13 @@ class OverlayWindow:
         # 2. LÓGICA DE INTERVALO (Visual e Comportamento)
         if session_type and 'break' in session_type:
             try:
-                # Visual Azul Relaxante
                 self.lbl_task.config(text=f"RECARREGANDO ENERGIA... ({self.minutes}m)", fg="#03A9F4")
             except: pass
             
-            # Timer simples sem popups
             total_seconds = self.minutes * 60
-            start_time = time.time()
+            self.start_time = time.time() # [ALTERADO] Usa self
             while self.running:
-                elapsed = time.time() - start_time
+                elapsed = time.time() - self.start_time # [ALTERADO] Usa self
                 if elapsed >= total_seconds:
                     self.running = False
                     self.root.after(0, self.time_expired)
@@ -477,19 +479,17 @@ class OverlayWindow:
         # 3. LÓGICA DE STANDBY (Lazer)
         if is_standby:
             try:
-                # Feedback visual relaxante
                 self.root.after(0, lambda: self.lbl_task.config(text="MODO STANDBY: AGUARDANDO RETORNO", fg="#4CAF50"))
             except: pass
             
-            start_time = time.time()
+            self.start_time = time.time() # [ALTERADO] Usa self
             while self.running:
-                elapsed = time.time() - start_time
+                elapsed = time.time() - self.start_time # [ALTERADO] Usa self
                 if elapsed >= total_seconds:
                     self.running = False
                     self.root.after(0, self.time_expired)
                     break
                 time.sleep(1)
-            # SAI DA FUNÇÃO AQUI. Não executa a lógica de popups abaixo.
             return 
 
         # 4. LÓGICA PADRÃO (MODO ESTUDO COM FISCALIZAÇÃO)
@@ -503,9 +503,9 @@ class OverlayWindow:
             trigger_at = random.randint(min_sec + 60, max_sec)
             popup_times.append(trigger_at)
         
-        start_time = time.time()
+        self.start_time = time.time() # [ALTERADO] Usa self
         while self.running:
-            elapsed = time.time() - start_time
+            elapsed = time.time() - self.start_time # [ALTERADO] Usa self
             if elapsed >= total_seconds:
                 self.running = False
                 self.root.after(0, self.time_expired)
@@ -556,6 +556,21 @@ class OverlayWindow:
         setup.run()
 
     def on_give_up(self):
+        # [NOVO] Calcula o tempo proporcional trabalhado antes de sair
+        if self.start_time:
+            elapsed_seconds = time.time() - self.start_time
+            minutes_done = int(elapsed_seconds / 60)
+            
+            # Só salva se tiver feito pelo menos 1 minuto
+            if minutes_done > 0:
+                config = load_config_data()
+                session_type = config.get('session_type', 'focus')
+                
+                # Garante que só ganha crédito se for sessão de foco (não break/standby)
+                if 'break' not in session_type and session_type != 'standby':
+                    save_focus_progress(minutes_done)
+                    log_event("progress_saved_partial", f"+{minutes_done} min (Encerrado Manualmente).")
+
         self.running = False
         self.root.destroy()
         return_to_main_app()
