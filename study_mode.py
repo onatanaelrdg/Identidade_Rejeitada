@@ -211,15 +211,15 @@ class SetupWindow:
         total_min = stats['focus_minutes']
         
         # 2. Cálculos de Direito
-        # A cada 100min (1h40) ganha um de 10m
-        earned_10 = total_min // 100
+        # A cada 80min (1h20) ganha um de 10m
+        earned_10 = total_min // 80
         avail_10 = max(0, earned_10 - stats['used_10'])
-        next_10 = 100 - (total_min % 100)
+        next_10 = 80 - (total_min % 80)
         
-        # A cada 200min (3h20) ganha um de 20m
-        earned_20 = total_min // 200
+        # A cada 180min (3h) ganha um de 20m
+        earned_20 = total_min // 180
         avail_20 = max(0, earned_20 - stats['used_20'])
-        next_20 = 200 - (total_min % 200)
+        next_20 = 180 - (total_min % 180)
         
         lbl_info = tk.Label(frame, text=f"Foco Hoje: {total_min} min", font=("Segoe UI", 8), bg="#1A1A1A", fg="#666")
         lbl_info.pack(pady=(10, 0))
@@ -227,7 +227,7 @@ class SetupWindow:
         # BOTÃO INTERVALO 10 MIN
         txt_10 = f"☕ Intervalo 10m [{avail_10}]"
         if avail_10 == 0:
-            txt_10 += f" (Faltam {next_10}m)"
+            txt_10 += f" (Faltam {next_10}min)"
             state_10 = tk.DISABLED
             bg_10 = "#333333"
             fg_10 = "#666666"
@@ -244,7 +244,7 @@ class SetupWindow:
         # BOTÃO LANCHE 20 MIN
         txt_20 = f"🥪 Lanche 20m [{avail_20}]"
         if avail_20 == 0:
-            txt_20 += f" (Faltam {next_20}m)"
+            txt_20 += f" (Faltam {next_20}min)"
             state_20 = tk.DISABLED
             bg_20 = "#333333"
             fg_20 = "#666666"
