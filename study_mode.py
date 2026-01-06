@@ -448,12 +448,13 @@ class OverlayWindow:
             self.on_give_up()
 
     def run_logic(self):
-        # [MODIFICADO] Verifica se é lazer
+        # 1. Carrega a configuração e define a variável CRÍTICA
         config = load_config_data()
-        is_standby = (config.get('session_type') == 'standby')
+        session_type = config.get('session_type', 'focus')
+        is_standby = (session_type == 'standby')
 
-        # [NOVO] LÓGICA DE INTERVALO (Visual e Comportamento)
-        if 'break' in session_type:
+        # 2. LÓGICA DE INTERVALO (Visual e Comportamento)
+        if session_type and 'break' in session_type:
             try:
                 # Visual Azul Relaxante
                 self.lbl_task.config(text=f"RECARREGANDO ENERGIA... ({self.minutes}m)", fg="#03A9F4")
@@ -473,10 +474,7 @@ class OverlayWindow:
 
         total_seconds = self.minutes * 60
         
-        # Se for LAZER, mudamos o comportamento:
-        # 1. Muda o visual para verde
-        # 2. NÃO agenda popups de fiscalização
-        
+        # 3. LÓGICA DE STANDBY (Lazer)
         if is_standby:
             try:
                 # Feedback visual relaxante
@@ -494,7 +492,7 @@ class OverlayWindow:
             # SAI DA FUNÇÃO AQUI. Não executa a lógica de popups abaixo.
             return 
 
-        # --- LÓGICA PADRÃO (MODO ESTUDO) ---
+        # 4. LÓGICA PADRÃO (MODO ESTUDO COM FISCALIZAÇÃO)
         num_popups = 3 if self.minutes == 30 else 4
         slot_size = total_seconds // num_popups
         popup_times = []
