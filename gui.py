@@ -88,6 +88,15 @@ class App:
         
         if not self.tasks_for_today:
             ttk.Label(self.scrollable_frame, text="Nenhuma tarefa de rotina para hoje.", font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
+            ttk.Label(self.scrollable_frame, text="⏸️ Streak Pausado (Folga)", font=("Segoe UI", 9, "bold"), foreground="#00CCFF").pack(pady=5)
+            
+            # --- CORREÇÃO: SALVA O DIA COMO 'VISTO' ---
+            # Se não tem nada pra fazer, atualizamos a data para hoje.
+            # Assim, amanhã o sistema vê que não houve falha hoje e mantém o streak.
+            if self.config_data.get('last_completion_date') != today_str:
+                self.config_data['last_completion_date'] = today_str
+                save_config_data(self.config_data)
+                log_event("streak_paused", "Dia sem tarefas: Streak preservado.", category="system")
         else:
             for task_id, task in self.tasks_for_today.items():
                 f = ttk.Frame(self.scrollable_frame, padding=5)
