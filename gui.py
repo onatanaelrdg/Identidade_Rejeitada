@@ -88,7 +88,7 @@ class App:
         
         if not self.tasks_for_today:
             ttk.Label(self.scrollable_frame, text="Nenhuma tarefa de rotina para hoje.", font=("Segoe UI", 10, "italic")).pack(pady=20, padx=10)
-            ttk.Label(self.scrollable_frame, text="⏸️ Streak Pausado (Folga)", font=("Segoe UI", 9, "bold"), foreground="#00CCFF").pack(pady=5)
+            #ttk.Label(self.scrollable_frame, text="⏸️ Streak Pausado (Folga)", font=("Segoe UI", 9, "bold"), foreground="#00CCFF").pack(pady=5)
             
             # --- CORREÇÃO: SALVA O DIA COMO 'VISTO' ---
             # Se não tem nada pra fazer, atualizamos a data para hoje.
