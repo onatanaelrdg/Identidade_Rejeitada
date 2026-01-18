@@ -527,11 +527,40 @@ class IdentityRejectionSystem:
             time.sleep(0.5) 
 
     def get_next_interval(self):
-        days = self.config.get('consecutive_completion_days', 0)
+        # 1. Carrega dados de hoje
+        config = self.load_config()
+        
+        today_str = str(date.today())
+        stats = config.get('daily_break_stats', {})
+        
+        # Se o registro não for de hoje, considera foco zero
+        focus_today = 0
+        if stats.get('date') == today_str:
+            focus_today = stats.get('focus_minutes', 0)
+            
+        # --- LÓGICA DO PEDÁGIO DINÂMICO ---
+        random.seed(today_str) 
+        toll_target = random.randint(29, 69)
+        random.seed(None) 
+        
+        # Meta aleatória do dia
+        if focus_today < toll_target:
+            return random.randint(1, 3) * 60
+
+        # --- LÓGICA DA CONFIANÇA ---
+        days = config.get('consecutive_completion_days', 0)
+        
         min_int = 1 + (days * 5)
         max_int = 3 + (days * 10)
+        
+        # Teto de 3 horas
+        if min_int > 120: min_int = 120
+        if max_int > 180: max_int = 180
+        
         if min_int > max_int: min_int = max_int - 10
-        return random.randint(min_int, max_int)
+        
+        minutes = random.randint(min_int, max_int)
+        return minutes * 60
 
     def run_rejection_loop(self):
         self.start_time = time.time()
