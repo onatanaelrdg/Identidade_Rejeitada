@@ -61,6 +61,49 @@ class App:
         ttk.Label(header, text="GERENCIADOR DE ATIVIDADES", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Button(header, text="☰ Menu", command=self.open_menu).pack(side=tk.RIGHT)
 
+        # =================================================================
+        # [NOVO] BARRA DE PROGRESSO DO ANO
+        # =================================================================
+        today = date.today()
+        # Cálculo da porcentagem
+        day_of_year = today.toordinal() - date(today.year, 1, 1).toordinal() + 1
+        is_leap = (today.year % 4 == 0 and today.year % 100 != 0) or (today.year % 400 == 0)
+        total_days = 366 if is_leap else 365
+        percent_gone = (day_of_year / total_days) * 100
+        
+        # Formato: Hoje: 25/01/2026 - 6.8% do ano
+        today_fmt = today.strftime("%d/%m/%Y")
+        lbl_text = f"Hoje: {today_fmt} - {percent_gone:.1f}% do ano"
+        
+        # Frame dedicado logo abaixo do Header
+        memento_frame = tk.Frame(self.main_frame, bg="#2E2E2E", pady=2)
+        memento_frame.pack(fill=tk.X, pady=(0, 10)) # Pequeno espaçamento abaixo
+        
+        # Cor Dinâmica (Semáforo da Vida)
+        # Azul (Inicio) -> Amarelo (Atenção) -> Vermelho (Urgência)
+        bar_color = "#00CCFF" 
+        if percent_gone > 25: bar_color = "#FFD700"
+        if percent_gone > 50: bar_color = "#FF4444"
+        if percent_gone > 75: bar_color = "#8B0000"
+        
+        # Texto
+        tk.Label(memento_frame, text=lbl_text, font=("Segoe UI", 9, "bold"), 
+                 bg="#2E2E2E", fg=bar_color).pack(anchor=tk.W)
+        
+        # Barra Visual (Canvas)
+        canvas_h = 4 # Barra fina e discreta
+        canvas = tk.Canvas(memento_frame, height=canvas_h, bg="#111111", highlightthickness=0)
+        canvas.pack(fill=tk.X, pady=(2, 0))
+        
+        # Preenchimento da Barra
+        self.root.update_idletasks()
+        w = self.root.winfo_width()
+        if w < 200: w = 580 # Fallback caso a janela ainda não tenha tamanho
+        fill_w = (percent_gone / 100) * w
+        
+        canvas.create_rectangle(0, 0, fill_w, canvas_h, fill=bar_color, width=0)
+        # =================================================================
+
         self.study_mode_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(self.main_frame, text="Modo Estudo/Trabalho", variable=self.study_mode_var, command=self.toggle_study_mode).pack(anchor=tk.W, pady=5)
         
