@@ -11,17 +11,21 @@ def setup_persistence():
     if not IS_WINDOWS: return True
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        bat_path = os.path.join(script_dir, "IRS_background.bat")
+        bat_daemon = os.path.join(script_dir, "IRS_background.bat")
         
-        if not os.path.exists(bat_path):
-            # Cria o bat automaticamente se não existir
-            with open(bat_path, "w") as f:
-                # pythonw roda sem janela preta
-                f.write(f'@echo off\nstart "" pythonw "{os.path.join(script_dir, "identidade_rejeitada.py")}" --daemon')
+        with open(bat_daemon, "w") as f:
+            f.write(f'@echo off\nstart "" pythonw "{os.path.join(script_dir, "identidade_rejeitada.py")}" --daemon')
+            
+        bat_interface = os.path.join(script_dir, "IRS_task_manager.bat")
         
+        with open(bat_interface, "w") as f:
+            f.write(f'@echo off\nstart "" pythonw "{os.path.join(script_dir, "identidade_rejeitada.py")}"')
+
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, f"{APP_NAME}_Daemon", 0, winreg.REG_SZ, bat_path)
+            winreg.SetValueEx(key, f"{APP_NAME}_Daemon", 0, winreg.REG_SZ, bat_daemon)
+            winreg.SetValueEx(key, f"{APP_NAME}_Visual", 0, winreg.REG_SZ, bat_interface)
+            
         return True
     except Exception as e:
         print(f"Erro persistencia: {e}")
