@@ -533,31 +533,37 @@ class IdentityRejectionSystem:
         today_str = str(date.today())
         stats = config.get('daily_break_stats', {})
         
-        # Se o registro não for de hoje, considera foco zero
+        # Verifica quanto você já focou hoje
         focus_today = 0
         if stats.get('date') == today_str:
             focus_today = stats.get('focus_minutes', 0)
             
-        # --- LÓGICA DO PEDÁGIO DINÂMICO ---
+        # --- LÓGICA DO PEDÁGIO (FASE 1) ---
+        # Define a meta aleatória do dia fixa com seed
         random.seed(today_str) 
         toll_target = random.randint(29, 69)
         random.seed(None) 
         
-        # Meta aleatória do dia
+        # Se você ainda NÃO pagou o pedágio (trabalhou menos que a meta):
+        # O sistema é agressivo: rejeições a cada 1 a 3 minutos.
         if focus_today < toll_target:
             return random.randint(1, 3) * 60
 
-        # --- LÓGICA DA CONFIANÇA ---
+        # --- LÓGICA DO STREAK COM TETO (FASE 2) ---
+        # Se você JÁ pagou o pedágio, calcula o bônus do streak.
         days = config.get('consecutive_completion_days', 0)
         
-        min_int = 1 + (days * 5)
-        max_int = 3 + (days * 10)
+        # Adição de minutos para cada dia de streak.
+        min_int = 1 + (days * 1)
+        max_int = 3 + (days * 1)
         
-        # Teto de 3 horas
-        if min_int > 120: min_int = 120
-        if max_int > 180: max_int = 180
+        # --- TRAVA DE 30 MIN ---
+        if min_int > 30: min_int = 30
+        if max_int > 30: max_int = 30
         
-        if min_int > max_int: min_int = max_int - 10
+        # Ajuste de segurança caso min fique maior que max por causa da trava
+        if min_int > max_int: min_int = max_int - 5
+        if min_int < 5: min_int = 5
         
         minutes = random.randint(min_int, max_int)
         return minutes * 60
