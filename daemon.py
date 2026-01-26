@@ -543,10 +543,41 @@ class IdentityRejectionSystem:
     def run_rejection_loop(self):
         self.start_time = time.time()
         
-        # --- GRACE PERIOD ---
-        # Define um tempo de 15 a 30 minutos de silêncio antes de começar a cobrar.
-        self.startup_grace_duration = random.randint(15, 30) * 60
-        log_event("daemon_started", f"Daemon Iniciado. Grace Period: {self.startup_grace_duration/60:.1f} minutos.", category="system")
+        # --- LÓGICA DE GRACE PERIOD BLINDADA (Anti-Scumming) ---
+        self.reload_config()
+        today_str = str(date.today())
+        
+        # Lê os dados salvos de controle
+        grace_data = self.config.get('grace_period_control', {})
+        last_date = grace_data.get('date')
+        expiry_ts = grace_data.get('expiry_ts', 0)
+        
+        now = time.time()
+        
+        # 1. É um novo dia? (Ou primeira vez rodando essa versão)
+        if last_date != today_str:
+            # Sorteia novo tempo (15 a 30 min)
+            mins = random.randint(15, 30)
+            self.startup_grace_duration = mins * 60
+            
+            # Salva
+            self.config['grace_period_control'] = {
+                "date": today_str,
+                "expiry_ts": now + self.startup_grace_duration
+            }
+            self.save_config()
+            log_event("grace_period_started", f"Grace Period gerado: {mins} minutos.")
+            
+        else:
+            # 2. É o mesmo dia. Ainda tem tempo sobrando?
+            if now < expiry_ts:
+                # Sim, recupera APENAS o que sobrou.
+                self.startup_grace_duration = expiry_ts - now
+                log_event("grace_period_restored", f"Sessão restaurada. Restam {self.startup_grace_duration/60:.1f} minutos de silêncio.")
+            else:
+                # Não. O tempo já acabou hoje.
+                self.startup_grace_duration = 0
+                log_event("grace_period_expired", "Grace Period de hoje já esgotado. Iniciando no modo padrão.")
         
         while self.running:
             try:
@@ -557,30 +588,29 @@ class IdentityRejectionSystem:
                     time.sleep(30)
                     continue
 
-                # Pega o próximo intervalo (Grace Period, 1-3min ou 30min)
                 interval = self.get_next_interval()
                 
-                # Loop de espera (dorme segundo a segundo para reagir rápido a mudanças)
-                for i in range(interval):
+                for i in range(int(interval)):
                     if not self.running: break
                     
                     if i % 5 == 0: 
                         self.reload_config()
                         self.check_fixed_schedule_violations()
-                        # Se entrar em modo estudo no meio do intervalo, para de esperar e reinicia
                         if self.config.get('study_mode', False) or self.all_tasks_completed(): break
                     
                     time.sleep(1)
                 
-                # Se acordou e ainda não tá trabalhando
                 if self.running and not self.config.get('study_mode', False) and not self.all_tasks_completed():
-                    elapsed_total = time.time() - self.start_time
-
-                    is_severe = (elapsed_total > (self.startup_grace_duration + 1800))
+                    
+                    saved_expiry = self.config.get('grace_period_control', {}).get('expiry_ts', 0)
+                    time_since_expiry = time.time() - saved_expiry
+                    
+                    is_severe = (time_since_expiry > 1800)
+                    
                     self.play_rejection_sequence(is_severe_mode=is_severe)
 
             except Exception as e:
-                print(f"Erro loop: {e}")
+                log_event("rejection_loop_error", f"Erro loop: {e}", category="system")
                 time.sleep(60)
 
     def start(self):
