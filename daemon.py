@@ -527,73 +527,56 @@ class IdentityRejectionSystem:
             time.sleep(0.5) 
 
     def get_next_interval(self):
-        # 1. Carrega dados de hoje
-        config = self.load_config()
+        # 1. Carrega dados atualizados
+        self.reload_config()
         
-        today_str = str(date.today())
-        stats = config.get('daily_break_stats', {})
+        # 2. Grace Period (Ao ligar o PC)
+        elapsed = time.time() - self.start_time
+        remaining_grace = self.startup_grace_duration - elapsed
         
-        # Verifica quanto você já focou hoje
-        focus_today = 0
-        if stats.get('date') == today_str:
-            focus_today = stats.get('focus_minutes', 0)
-            
-        # --- LÓGICA DO PEDÁGIO (FASE 1) ---
-        # Define a meta aleatória do dia fixa com seed
-        random.seed(today_str) 
-        toll_target = random.randint(29, 69)
-        random.seed(None) 
-        
-        # Se você ainda NÃO pagou o pedágio (trabalhou menos que a meta):
-        # O sistema é agressivo: rejeições a cada 1 a 3 minutos.
-        if focus_today < toll_target:
-            return random.randint(1, 3) * 60
+        if remaining_grace > 0:
+            return int(remaining_grace)
 
-        # --- LÓGICA DO STREAK COM TETO (FASE 2) ---
-        # Se você JÁ pagou o pedágio, calcula o bônus do streak.
-        days = config.get('consecutive_completion_days', 0)
-        
-        # Adição de minutos para cada dia de streak.
-        min_int = 1 + (days * 1)
-        max_int = 3 + (days * 1)
-        
-        # --- TRAVA DE 30 MIN ---
-        if min_int > 30: min_int = 30
-        if max_int > 30: max_int = 30
-        
-        # Ajuste de segurança caso min fique maior que max por causa da trava
-        if min_int > max_int: min_int = max_int - 5
-        if min_int < 5: min_int = 5
-        
-        minutes = random.randint(min_int, max_int)
-        return minutes * 60
+        # 3. REJEIÇÕES
+        return random.randint(1, 3) * 60
 
     def run_rejection_loop(self):
         self.start_time = time.time()
+        
+        # --- GRACE PERIOD ---
+        # Define um tempo de 15 a 30 minutos de silêncio antes de começar a cobrar.
+        self.startup_grace_duration = random.randint(15, 30) * 60
+        print(f"Daemon Iniciado. Grace Period: {self.startup_grace_duration/60:.1f} minutos.")
+        
         while self.running:
             try:
                 self.reload_config()
-                
                 self.check_fixed_schedule_violations()
 
                 if self.config.get('study_mode', False) or self.all_tasks_completed():
                     time.sleep(30)
                     continue
 
+                # Pega o próximo intervalo (Grace Period, 1-3min ou 30min)
                 interval = self.get_next_interval()
-                for i in range(interval * 60):
+                
+                # Loop de espera (dorme segundo a segundo para reagir rápido a mudanças)
+                for i in range(interval):
                     if not self.running: break
                     
                     if i % 5 == 0: 
                         self.reload_config()
                         self.check_fixed_schedule_violations()
+                        # Se entrar em modo estudo no meio do intervalo, para de esperar e reinicia
                         if self.config.get('study_mode', False) or self.all_tasks_completed(): break
                     
                     time.sleep(1)
                 
+                # Se acordou e ainda não tá trabalhando
                 if self.running and not self.config.get('study_mode', False) and not self.all_tasks_completed():
-                    elapsed = time.time() - self.start_time
-                    is_severe = elapsed > 1800
+                    elapsed_total = time.time() - self.start_time
+
+                    is_severe = (elapsed_total > (self.startup_grace_duration + 1800))
                     self.play_rejection_sequence(is_severe_mode=is_severe)
 
             except Exception as e:
