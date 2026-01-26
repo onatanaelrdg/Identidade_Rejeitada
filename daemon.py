@@ -546,7 +546,7 @@ class IdentityRejectionSystem:
         # --- GRACE PERIOD ---
         # Define um tempo de 15 a 30 minutos de silêncio antes de começar a cobrar.
         self.startup_grace_duration = random.randint(15, 30) * 60
-        print(f"Daemon Iniciado. Grace Period: {self.startup_grace_duration/60:.1f} minutos.")
+        log_event("daemon_started", f"Daemon Iniciado. Grace Period: {self.startup_grace_duration/60:.1f} minutos.", category="system")
         
         while self.running:
             try:

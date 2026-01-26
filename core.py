@@ -47,6 +47,9 @@ LOG_FILE = os.path.join(APP_DATA_DIR, "logging.json")
 PROOFS_DIR = os.path.join(APP_DATA_DIR, "provas")
 Path(PROOFS_DIR).mkdir(parents=True, exist_ok=True)
 
+# --- Definição do Arquivo de Segurança ---
+INTEGRITY_FILE = os.path.join(APP_DATA_DIR, 'security.chk')
+
 # Sistema de logs
 LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
@@ -60,6 +63,24 @@ FILES_MAP = {
 
 SECURITY_LOG_FILE = FILES_MAP["security"]
 HISTORY_LOG_FILE = FILES_MAP["history"]
+
+# --- Função Auxiliar (NOVA) ---
+def get_file_hash(filepath):
+    """Gera uma impressão digital (Hash SHA256) do arquivo."""
+    if not os.path.exists(filepath): return None
+    try:
+        with open(filepath, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except: return None
+
+def update_integrity_file():
+    """Atualiza o arquivo sombra com a assinatura do config atual."""
+    current_hash = get_file_hash(CONFIG_FILE)
+    if current_hash:
+        try:
+            with open(INTEGRITY_FILE, 'w') as f:
+                f.write(current_hash)
+        except: pass
 
 class FileLock:
     """
@@ -94,11 +115,43 @@ class FileLock:
 
 # Gravação Atomica
 def atomic_write(target_file, data):
+    """
+    Salva dados em JSON de forma atômica e segura contra erros de bloqueio do Windows.
+    """
+    # 1. INJEÇÃO DE AVISO
+    if isinstance(data, dict):
+        data["_WARNING"] = "NAO EDITE MANUALMENTE. O SISTEMA DETECTARA A ALTERACAO E ZERARA SEU STREAK."
+
     temp_file = f"{target_file}.tmp"
-    with open(temp_file, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush(); os.fsync(f.fileno())
-    os.replace(temp_file, target_file)
+    max_retries = 5
+    
+    # 2. LOOP DE TENTATIVAS (Contra WinError 5)
+    for attempt in range(max_retries):
+        try:
+            # Grava no arquivo temporário primeiro
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            
+            # Substituição Atômica
+            os.replace(temp_file, target_file)
+            
+            # ATUALIZAÇÃO DA SEGURANÇA
+            # Só atualiza o hash se o arquivo for o de configuração principal
+            if os.path.basename(target_file) == "config.json":
+                update_integrity_file()
+                
+            return True
+
+        except PermissionError:
+            # Se o Windows bloquear
+            time.sleep(0.25)
+        except Exception as e:
+            print(f"Erro ao salvar {target_file} (tentativa {attempt+1}): {e}")
+            time.sleep(0.5)
+            
+    return False
     
 
 # --- Sistema de backup ---
