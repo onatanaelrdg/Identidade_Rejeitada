@@ -145,9 +145,14 @@ def atomic_write(target_file, data):
             return True
 
         except PermissionError:
-            # Se o Windows bloquear
+            # Se o Windows bloquear (WinError 5), LOGA O AVISO e tenta de novo
+            # Isso vai aparecer no seu log como "save_retry"
+            log_event("save_retry", f"Bloqueio de permissão (WinError 5). Tentativa {attempt+1}/{max_retries}...", category="system")
             time.sleep(0.25)
+            
         except Exception as e:
+            # Outros erros genéricos
+            log_event("save_error", f"Erro ao salvar {os.path.basename(target_file)} (Tentativa {attempt+1}): {str(e)}", category="system")
             print(f"Erro ao salvar {target_file} (tentativa {attempt+1}): {e}")
             time.sleep(0.5)
             
